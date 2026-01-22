@@ -1,0 +1,10 @@
+{
+    "status": "succeeded",
+    "answer": "您母亲最近药有按时吃吗？她的入睡难和易怒情况好些了吗？",
+    "json_data": "您母亲最近药有按时吃吗？她的入睡难和易怒情况好些了吗？",
+    "workflow_run_id": "de512fc4-0e2b-4064-a5d0-2bed6c308686",
+    "task_id": "9edfcd9e-7e98-4eb9-bf84-e4654bccb639",
+    "raw_outputs": {
+        "output": "您母亲最近药有按时吃吗？她的入睡难和易怒情况好些了吗？"
+    }
+}

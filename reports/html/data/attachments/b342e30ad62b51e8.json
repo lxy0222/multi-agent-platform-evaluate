@@ -1,0 +1,10 @@
+{
+    "needHuman": true,
+    "humanReason": "用户发送了音频消息，需要人工处理",
+    "messageList": [
+        {
+            "content": "",
+            "messageType": "text"
+        }
+    ]
+}

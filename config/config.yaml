@@ -1,0 +1,63 @@
+# config/config.yaml
+
+base_url: "http://121.43.154.99/v1"
+agents:
+  # 1. 小方初诊
+  first_visit:
+    api_key: "app-SGOScn0t6ASzcZgvhEtvxCAA"
+    workflow_type: "chat" # 或 workflow
+
+  # 2. 小方复诊
+  follow_up:
+    api_key: "app-jUGG3OQJG0DhwkUSzqqfY6QV"
+    workflow_type: "chat"
+
+  # 3. 小方初诊执行待办
+  todo_exec_first:
+    api_key: "app-x17wDNtcWbo2J0sy353vsVQ6"
+    workflow_type: "workflow"
+
+  # 4. 小方复诊执行待办
+  todo_exec_follow:
+    api_key: "app-Si1mBopNllVccedgyrCpNSvQ"
+    workflow_type: "workflow"
+
+
+# LLM 裁判配置 (用于自动化评估)
+judge:
+  enabled: true
+  provider: "gemini"
+  api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+  model: "gpt-4o"
+  # 评分阈值，低于此分数视为失败
+  pass_threshold: 8
+
+# 测试报告配置
+report:
+  title: "小方智能体回归测试报告"
+  language: "zh-CN"
+
+
+# 测试执行策略配置
+runner:
+  # 并发执行线程数 (依赖 pytest-xdist)
+  # 设置为 "auto" 则自动使用 CPU 核心数，设置为 1 则单线程顺序执行
+  concurrency: 2
+
+  # 重复执行
+  repeat: 1
+
+  # 失败重试次数 (依赖 pytest-rerunfailures)
+  # 针对 Dify/LLM 网络波动，建议设置 1-2 次
+  reruns: 2
+  rerun_delay: 2 # 重试间隔秒数
+
+  # 测试用例路径
+  test_path: "tests/"
+
+  # 报告存放路径
+  report_temp_dir: "./reports/temp"  # Allure 原始 JSON 数据
+  report_html_dir: "./reports/html"  # 生成的 HTML 网页
+
+  # 是否在测试结束后自动打开浏览器预览报告 (CI 环境建议设为 false)
+  auto_open_report: true
