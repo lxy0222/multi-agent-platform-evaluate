@@ -1,13 +1,65 @@
 "DESCRIPTION","DURATION IN MS","NAME","PARENT SUITE","START TIME","STATUS","STOP TIME","SUB SUITE","SUITE","TEST CLASS","TEST METHOD"
-"","17689","复诊执行待办：复诊scene=12第一个档案的关怀发出后患者未回复,第二天早上跳过第一个档案直接对第二个档案进行关怀","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","6969","复诊执行待办：复诊执行待办工作流：回复包含英文测试","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","6227","复诊执行待办：复诊scene=19复诊前一天回复话术","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","12822","[follow_up] CASE_01: 异常场景一：线上回复英文-It normal","tests","2026-01-20","passed","2026-01-20","TestXiaoFangFZAgents","test_xiaofang_fz","",""
-"","6074","复诊执行待办：复诊执行待办工作流：回复包含日文和emoji测试","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","6039","复诊执行待办：复诊执行待办工作流：回复包含思考过程测试","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","476","复诊执行待办：复诊scene=12用户只填写了问诊单，从问诊单中提取主诉","tests","2026-01-20","failed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","5472","复诊执行待办：复诊scene=10收货当天话术测试","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","25793","复诊执行待办：None","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
-"","13756","[follow_up] Case_03: 主动关怀患者回复后话术测试","tests","2026-01-20","passed","2026-01-20","TestXiaoFangFZAgents","test_xiaofang_fz","",""
-"","8566","[follow_up] CASE_02: 异常场景二：患者发送语音，回复异常","tests","2026-01-20","passed","2026-01-20","TestXiaoFangFZAgents","test_xiaofang_fz","",""
-"","6288","复诊执行待办：复诊scene=12用户未填写了问诊单，从医生聊天中提取主诉","tests","2026-01-20","passed","2026-01-20","TestFzToDo","test_xiaofang_fz_todo","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","58293","[todo_exec_follow] CASE_01: 复诊执行待办工作流：回复包含思考过程测试","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","9815","[todo_exec_follow] CASE_02: 复诊执行待办工作流：回复包含英文测试","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","9817","[todo_exec_follow] CASE_04: 复诊scene=10收货当天话术测试","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","7467","[todo_exec_follow] CASE_08: 复诊scene=19复诊前一天回复话术","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","58295","[todo_exec_follow] CASE_03: 复诊执行待办工作流：回复包含日文和emoji测试","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","8550","[todo_exec_follow] CASE_07: 复诊scene=12用户未填写了问诊单，从医生聊天中提取主诉","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","22205","[todo_exec_follow] CASE_05: 复诊scene=12第一个档案的关怀发出后患者未回复,第二天早上跳过第一个档案直接对第二个档案进行关怀","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","2125","[todo_exec_follow] CASE_06: 复诊scene=12用户只填写了问诊单，从问诊单中提取主诉","src.tests","2026-01-23","passed","2026-01-23","TestUnifiedFramework","test_unified","",""

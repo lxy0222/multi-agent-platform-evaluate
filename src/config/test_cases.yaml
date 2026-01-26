@@ -1,0 +1,110 @@
+# ==========================================
+# 测试用例配置文件
+# 用于灵活控制测试用例的加载和执行
+# ==========================================
+
+# 测试数据文件配置
+test_data:
+  # 数据文件目录
+  data_dir: "data"
+  
+  # 要加载的测试文件列表
+  files:
+#    - "xiaofang_fz_chat.csv"
+     - "xiaofang_fz_todo.csv"  # 取消注释以启用
+    # - "exports_1768996396888-lf-dataset_items-export-cmkmc0ke40006o507fqd1864y.csv"
+  
+  # 是否自动发现所有CSV文件
+  auto_discover: false
+  
+  # 自动发现时排除的文件模式
+  exclude_patterns:
+    - "**/temp_*.csv"
+    - "**/*backup*.csv"
+
+# 用例过滤配置
+case_filter:
+  # 是否启用过滤
+  enabled: false
+  
+  # 按用例ID过滤（精确匹配）
+  case_ids:
+    # - "CASE_01"
+    # - "CASE_02"
+  
+  # 按智能体过滤
+  target_agents:
+    # - "follow_up"
+    # - "todo_exec_follow"
+  
+  # 按标签过滤（包含任一标签即可）
+  tags:
+    # - "follow_up"
+    # - "Reply"
+  
+  # 按用例类型过滤
+  case_type:
+    # - "chat_message"
+    # - "workflow_execution"
+  
+  # 只执行启用的用例
+  enabled_only: true
+  
+  # 最小优先级（1-5）
+  priority_min: 1
+
+# 执行策略配置
+execution:
+  # 是否启用会话缓存（多轮对话）
+  enable_session_cache: true
+  
+  # 请求间隔时间（秒）
+  request_interval: 2
+  
+  # 失败时是否继续执行
+  continue_on_failure: true
+  
+  # 是否记录详细日志
+  verbose: true
+
+# 断言配置
+assertion:
+  # 是否启用硬规则检查
+  enable_hard_check: true
+  
+  # 是否启用LLM评分
+  enable_soft_check: false
+  
+  # 是否检查转人工
+  check_human_transfer: true
+  
+  # 自定义断言规则
+  custom_rules:
+    # 示例：检查回复长度
+    # - type: "length_check"
+    #   min: 10
+    #   max: 500
+
+app_mapping:
+  2a4ec816-140f-4b05-bdf3-16ba3a16af91: todo_exec_first
+  todo_exec_follow: todo_exec_follow
+  first_visit: first_visit
+  follow_up: follow_up
+
+# 报告配置
+report:
+  # 是否附加请求参数到报告
+  attach_request: true
+  
+  # 是否附加响应结果到报告
+  attach_response: true
+  
+  # 是否附加AI回复内容
+  attach_ai_reply: true
+  
+  # 是否附加校验详情
+  attach_validation: true
+  
+  # 失败时截图（如果适用）
+  screenshot_on_failure: false
+

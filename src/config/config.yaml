@@ -1,0 +1,82 @@
+# config/config.yaml
+
+# ================= 全局默认配置 =================
+defaults:
+  dify_base_url: "http://121.43.154.99/v1" # Dify 私有部署的默认地址
+
+# ================= 智能体列表 =================
+agents:
+  # --- 场景1: Dify 上的初诊 (Chat类型) ---
+  first_visit:
+    platform: "dify"                        # 【必填】用于识别平台
+    api_key: "app-SGOScn0t6ASzcZgvhEtvxCAA"
+    mode: "chat"                            # Dify特有: chat 或 workflow
+    # base_url: 可以不填，代码里会自动继承 defaults
+
+  # --- 场景2: Dify 上的复诊执行待办 (Workflow类型) ---
+  todo_exec_follow:
+    platform: "dify"
+    api_key: "app-Si1mBopNllVccedgyrCpNSvQ"
+    mode: "workflow"
+  # --- 场景2: Dify 上的初诊诊执行待办 (Workflow类型) ---
+  todo_exec_first:
+    platform: "dify"
+    api_key: "app-x17wDNtcWbo2J0sy353vsVQ6"
+    mode: "workflow"
+
+  follow_up:
+    platform: "dify"
+    api_key: "app-jUGG3OQJG0DhwkUSzqqfY6QV"
+    mode: "chat"
+
+  # --- 场景3: Coze 上的智能体 (完全不同的参数) ---
+  coze_bot_v1:
+    platform: "coze"
+    bot_id: "7388XXXXXX"                    # Coze特有
+    auth_token: "pat-XXXXXX"                # Coze特有
+    user_id: "test_user"                    # Coze特有
+
+  # --- 场景4: 百度千帆 (完全不同的参数) ---
+  qianfan_demo:
+    platform: "qianfan"
+    access_key: "ALTAkV..."
+    secret_key: "bc868..."
+
+# LLM 裁判配置 (用于自动化评估)
+judge:
+  enabled: true
+  provider: "gemini"
+  api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+  model: "gpt-4o"
+  # 评分阈值，低于此分数视为失败
+  pass_threshold: 8
+
+# 测试报告配置
+report:
+  title: "小方智能体回归测试报告"
+  language: "zh-CN"
+
+
+# 测试执行策略配置
+runner:
+  # 并发执行线程数 (依赖 pytest-xdist)
+  # 设置为 "auto" 则自动使用 CPU 核心数，设置为 1 则单线程顺序执行
+  concurrency: 2
+
+  # 重复执行
+  repeat: 1
+
+  # 失败重试次数 (依赖 pytest-rerunfailures)
+  # 针对 Dify/LLM 网络波动，建议设置 1-2 次
+  reruns: 2
+  rerun_delay: 2 # 重试间隔秒数
+
+  # 测试用例路径
+  test_path: "src/tests/"
+
+  # 报告存放路径
+  report_temp_dir: "./reports/temp"  # Allure 原始 JSON 数据
+  report_html_dir: "./reports/html"  # 生成的 HTML 网页
+
+  # 是否在测试结束后自动打开浏览器预览报告 (CI 环境建议设为 false)
+  auto_open_report: true
