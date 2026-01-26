@@ -80,3 +80,17 @@ runner:
 
   # 是否在测试结束后自动打开浏览器预览报告 (CI 环境建议设为 false)
   auto_open_report: true
+
+# 测试数据配置
+test_data:
+  # 要加载的测试文件列表
+  files:
+    # - "xiaofang_fz_chat.csv"
+    - "xiaofang_fz_todo.csv"
+  
+  # 过滤条件（可选）
+  filter:
+     case_ids: ["CASE_01", "CASE_02"]  # 只执行指定用例
+    # target_agents: ["follow_up"]      # 只执行指定智能体
+    # tags: ["Reply"]                   # 包含指定标签
+    # enabled: true                     # 只执行启用的用例

@@ -7,6 +7,7 @@ import json
 import csv
 from typing import List, Dict, Any, Optional
 from src.utils.test_case_model import UnifiedTestCase, TestCaseType
+from src.utils.config_loader import ConfigLoader
 
 
 class CaseLoader:
@@ -323,3 +324,47 @@ class CaseLoader:
 
         return filtered
 
+
+def load_cases_from_config(config_path: str = "config/config.yaml") -> List[UnifiedTestCase]:
+    """
+    从配置文件加载测试用例
+    
+    Args:
+        config_path: 配置文件路径
+        
+    Returns:
+        测试用例列表
+    """
+    # 加载配置
+    config = ConfigLoader(config_path)
+    test_files = config.get("test_data.files", [])
+    case_filter = config.get("test_data.filter", {}) or {}
+    
+    # 过滤掉 None 值（yaml中注释掉的字段可能是None，取决于加载方式，但通常yaml safe_load不会把注释的key读出来）
+    # 但如果用户在yaml里写 key: null 或者 key: ，那么值就是None
+    if case_filter:
+        case_filter = {k: v for k, v in case_filter.items() if v is not None}
+    
+    # 实例化加载器
+    loader = CaseLoader(data_dir="data")
+    
+    # 加载用例
+    try:
+        # 检查CASE_FILTER是否有实际的过滤条件
+        has_filter = any(v for v in case_filter.values() if v)
+        filter_to_use = case_filter if has_filter else None
+        
+        cases = loader.load_multiple_files(test_files, case_filter=filter_to_use)
+        
+        if filter_to_use:
+            print(f"   应用的过滤条件: {filter_to_use}")
+    except Exception as e:
+        print(f"❌ 加载测试用例失败: {e}")
+        import traceback
+        traceback.print_exc()
+        cases = []
+        
+    if not cases:
+        print("⚠️ 没有找到任何测试用例")
+        
+    return cases

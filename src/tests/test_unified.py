@@ -6,63 +6,16 @@ import time
 import pytest
 import allure
 import json
-from src.utils.case_loader import CaseLoader
+from src.utils.case_loader import load_cases_from_config
 from src.utils.test_executor import TestExecutor
 
-
-# ==========================================
-# 配置区：修改这里来选择要执行的测试
-# ==========================================
-# 要加载的测试文件列表
-TEST_FILES = [
-    # "xiaofang_fz_chat.csv",
-    "xiaofang_fz_todo.csv",  # 取消注释以启用
-]
-
-# 过滤条件（可选）
-CASE_FILTER = {
-    # "case_ids": ["CASE_01", "CASE_02"],  # 只执行指定用例
-    # "target_agents": ["follow_up"],  # 只执行指定智能体
-    # "tags": ["Reply"],  # 包含指定标签
-    # "enabled": True,  # 只执行启用的用例
-}
 
 # 全局会话缓存
 HISTORY_CACHE = {}
 
-
-# ==========================================
-# 加载测试用例
-# ==========================================
-def load_test_cases():
-    """加载测试用例"""
-    loader = CaseLoader(data_dir="data")
-
-    # 加载用例
-    try:
-        # 检查CASE_FILTER是否有实际的过滤条件
-        has_filter = any(v for v in CASE_FILTER.values() if v)
-        filter_to_use = CASE_FILTER if has_filter else None
-
-        cases = loader.load_multiple_files(TEST_FILES, case_filter=filter_to_use)
-        print(f"\n✅ 成功加载 {len(cases)} 条测试用例")
-
-        if filter_to_use:
-            print(f"   应用的过滤条件: {filter_to_use}")
-    except Exception as e:
-        print(f"❌ 加载测试用例失败: {e}")
-        import traceback
-        traceback.print_exc()
-        cases = []
-
-    if not cases:
-        print("⚠️ 没有找到任何测试用例")
-
-    return cases
-
-
 # 加载用例
-test_cases = load_test_cases()
+# 从 config/config.yaml 中读取 test_data 配置
+test_cases = load_cases_from_config()
 
 
 # ==========================================
@@ -181,4 +134,3 @@ class TestUnifiedFramework:
         
         # 缓冲时间（避免请求过快）
         time.sleep(2)
-
