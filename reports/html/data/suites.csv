@@ -6,7 +6,7 @@
             case: UnifiedTestCase 实例
             client_factory: 客户端工厂 fixture
             evaluator: 评估器 fixture
-        ","11428","[todo_exec_follow] CASE_02: 复诊执行待办工作流：回复包含英文测试","src.tests","2026-01-26","passed","2026-01-26","TestUnifiedFramework","test_unified","",""
+        ","5394","[patient_summary] Case_PS_03: 整体情况总结-仅单个患者就诊仅进行聊天交流","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
 "
         统一的测试用例执行方法
         
@@ -14,4 +14,52 @@
             case: UnifiedTestCase 实例
             client_factory: 客户端工厂 fixture
             evaluator: 评估器 fixture
-        ","8134","[todo_exec_follow] CASE_01: 复诊执行待办工作流：回复包含思考过程测试","src.tests","2026-01-26","passed","2026-01-26","TestUnifiedFramework","test_unified","",""
+        ","6048","[patient_summary] Case_PS_06: 个人患者情况总结-对单一症状多次问诊","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","7317","[patient_summary] Case_PS_08: 个人患者情况总结-对多个症状多次问诊","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","6014","[patient_summary] Case_PS_05: 个人患者情况总结-仅对单一症状进行过单次就诊","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","5127","[patient_summary] CASE_PS_01: 整体情况总结-患者无足够信息进行总结","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","5773","[patient_summary] Case_PS_07: 整体情况总结-多档案家庭对多个症状多次问诊","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","6336","[patient_summary] Case_PS_04: 整体情况总结-仅单个患者就诊仅填写单一病症问诊单未购药","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""
+"
+        统一的测试用例执行方法
+        
+        Args:
+            case: UnifiedTestCase 实例
+            client_factory: 客户端工厂 fixture
+            evaluator: 评估器 fixture
+        ","4584","[patient_summary] CASE_PS_02: 个人患者情况总结-患者无足够信息进行总结","src.tests","2026-02-02","passed","2026-02-02","TestUnifiedFramework","test_unified","",""

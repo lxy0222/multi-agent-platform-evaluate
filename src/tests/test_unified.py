@@ -132,5 +132,34 @@ class TestUnifiedFramework:
                     attachment_type=allure.attachment_type.TEXT
                 )
         
+        # ==========================================
+        # 步骤4: LLM 智能评估
+        # ==========================================
+        with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
+             # 准备参数
+             context_inputs = case.dynamic_inputs
+             
+             llm_result = evaluator.llm_evaluate(
+                 inputs=case.input_query,
+                 actual_output=ai_reply,
+                 scene=case.scene_description,
+                 expected_output=case.expected_result, # 使用新增的预期结果字段
+                 context_inputs=context_inputs
+             )
+             
+             # 将评分结果写入报告
+             allure.attach(
+                 json.dumps(llm_result, ensure_ascii=False, indent=4),
+                 name="LLM 评估详细结果",
+                 attachment_type=allure.attachment_type.JSON
+             )
+             
+             score = llm_result.get("score", 0)
+             reason = llm_result.get("reason", "无")
+             
+             # 在报告摘要中显示分数
+             allure.dynamic.parameter("Eval Score", score)
+             print(f"🤖 [LLM Evaluator] Score: {score}, Reason: {reason}")
+        
         # 缓冲时间（避免请求过快）
         time.sleep(2)

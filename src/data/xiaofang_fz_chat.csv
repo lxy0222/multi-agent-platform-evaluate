@@ -1,4 +1,4 @@
-Case_ID,Target_Agent,Session_Key,场景描述,Input_Query,Dynamic_Inputs,Expected_Action,Assert
+Case_ID,Target_Agent,Session_Key,场景描述,Input_Query,Dynamic_Inputs,Expected_Action,Assert,Expected_Result
 CASE_01,follow_up,CHAT_A,异常场景一：线上回复英文-It normal,倒出来就比较多,"{
   ""patientId"": 4017225,
   ""externalUserId"": ""wmfoS8CgAA0PggTgMSpzKz6gBy6noyFw"",

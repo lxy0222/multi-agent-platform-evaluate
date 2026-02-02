@@ -11,8 +11,9 @@ test_data:
   # 要加载的测试文件列表
   files:
 #    - "xiaofang_fz_chat.csv"
-     - "xiaofang_fz_todo.csv"  # 取消注释以启用
+#     - "xiaofang_fz_todo.csv"
     # - "exports_1768996396888-lf-dataset_items-export-cmkmc0ke40006o507fqd1864y.csv"
+     - "patient_summary_chat.csv"
   
   # 是否自动发现所有CSV文件
   auto_discover: false
@@ -29,7 +30,7 @@ case_filter:
   
   # 按用例ID过滤（精确匹配）
   case_ids:
-    # - "CASE_01"
+#     - "Case_PS_08"
     # - "CASE_02"
   
   # 按智能体过滤

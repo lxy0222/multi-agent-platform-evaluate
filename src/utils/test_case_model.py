@@ -42,6 +42,7 @@ class UnifiedTestCase:
     
     # ========== 预期结果 ==========
     expected_action: str = "Reply"  # 预期动作：Reply, Block, Delay等
+    expected_result: Optional[str] = None  # 预期回复内容（用于LLM评估）
     assert_rules: List[str] = field(default_factory=list)  # 断言规则列表
     
     # ========== 扩展字段 ==========
@@ -77,6 +78,7 @@ class UnifiedTestCase:
             "session_key": self.session_key,
             "conversation_id": self.conversation_id,
             "expected_action": self.expected_action,
+            "expected_result": self.expected_result,
             "assert_rules": self.assert_rules,
             "order_detail": self.order_detail,
             "chat_history": self.chat_history,

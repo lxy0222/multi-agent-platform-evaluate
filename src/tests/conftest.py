@@ -47,9 +47,18 @@ def evaluator(config):
     """
     judge_key = config.get("judge.api_key")
     judge_model = config.get("judge.model", "gpt-4o")
+    
+    # 获取 Dify 评估配置
+    dify_config = config.get("judge.dify_config")
+    
+    # 如果没配置 base_url，尝试使用全局默认
+    if dify_config and "base_url" not in dify_config:
+         default_url = config.get("defaults.dify_base_url")
+         if default_url:
+             dify_config["base_url"] = default_url
 
-    if not judge_key:
-        print("\n⚠️ Warning: 未配置 judge.api_key，仅支持硬规则校验 (hard_check)，不支持 LLM 打分。")
+    if not judge_key and not dify_config:
+        print("\n⚠️ Warning: 未配置 judge.api_key 或 judge.dify_config，仅支持硬规则校验 (hard_check)。")
 
     # 始终返回实例，而不是 None
-    return Evaluator(judge_api_key=judge_key, model=judge_model)
+    return Evaluator(judge_api_key=judge_key, model=judge_model, dify_config=dify_config)

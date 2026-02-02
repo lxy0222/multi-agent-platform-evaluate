@@ -41,13 +41,22 @@ agents:
     platform: "qianfan"
     access_key: "ALTAkV..."
     secret_key: "bc868..."
+  patient_summary:
+    platform: "dify"                        # 【必填】用于识别平台
+    api_key: "app-f70jzLU0iKgAg6pNqvly9UU1"
+    mode: "chat"                            # Dify特有: chat 或 workflow
 
 # LLM 裁判配置 (用于自动化评估)
 judge:
   enabled: true
-  provider: "gemini"
-  api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-  model: "gpt-4o"
+  provider: "dify"
+  api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxx" # 保留旧的 key 兼容
+  model: "doubao-seed"
+  # Dify 评估智能体配置
+  dify_config:
+    platform: "dify"
+    api_key: "app-r6DI6naJxcjn7vRKajoyQ5w9"  # 请替换为评估 Agent 的 Key
+    base_url: "http://121.43.154.99/v1"
   # 评分阈值，低于此分数视为失败
   pass_threshold: 8
 
@@ -86,11 +95,11 @@ test_data:
   # 要加载的测试文件列表
   files:
     # - "xiaofang_fz_chat.csv"
-    - "xiaofang_fz_todo.csv"
+    - "patient_summary_chat.csv"
   
   # 过滤条件（可选）
   filter:
-     case_ids: ["CASE_01", "CASE_02"]  # 只执行指定用例
+#     case_ids: ["CASE_PS_01",]  # 只执行指定用例
     # target_agents: ["follow_up"]      # 只执行指定智能体
     # tags: ["Reply"]                   # 包含指定标签
     # enabled: true                     # 只执行启用的用例

@@ -130,11 +130,37 @@ class TestXiaoFangFZAgents:
                 allure.attach("常规校验通过", name="校验结果", attachment_type=allure.attachment_type.TEXT)
 
         # ==========================================
-        # 校验步骤2：特殊字段校验 (NeedHuman 等)
+        # 校验步骤2.5：LLM 智能评估 (新增)
+        # ==========================================
+        with allure.step("步骤3: LLM 智能评估 (Evaluator Agent)"):
+             llm_result = evaluator.llm_evaluate(
+                 inputs=user_query,
+                 actual_output=real_reply,
+                 scene=case.get('场景描述', '未定义场景'),
+                 expected_output=case.get('Expected_Action'),
+                 context_inputs=inputs
+             )
+             
+             # 将评分结果写入报告
+             allure.attach(
+                 json.dumps(llm_result, ensure_ascii=False, indent=4),
+                 name="LLM 评估详细结果",
+                 attachment_type=allure.attachment_type.JSON
+             )
+             
+             score = llm_result.get("score", 0)
+             reason = llm_result.get("reason", "无")
+             
+             # 在报告摘要中显示分数 (作为参数展示)
+             allure.dynamic.parameter("Eval Score", score)
+             print(f"🤖 [LLM Evaluator] Score: {score}, Reason: {reason}")
+
+        # ==========================================
+        # 校验步骤3：特殊字段校验 (NeedHuman 等)
         # ==========================================
         # 只有当 Excel 的 Assert 列被标记（如标为 1 或 true）时才执行
         if case['Assert']:
-            with allure.step("步骤3: 特殊字段校验 (转人工及空回复)"):
+            with allure.step("步骤4: 特殊字段校验 (转人工及空回复)"):
                 # 1. 提取关键数据用于报告展示
                 human_check_data = {
                     "needHuman": structured_data.get("needHuman"),

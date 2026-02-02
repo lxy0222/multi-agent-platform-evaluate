@@ -141,6 +141,8 @@ class CaseLoader:
                 if row.get("Dynamic_Inputs"):
                     try:
                         dynamic_inputs = json.loads(row["Dynamic_Inputs"])
+                        if "materialInfo" in row:
+                            dynamic_inputs["materialInfo"] = json.dumps(row["materialInfo"], ensure_ascii=False)
                     except json.JSONDecodeError:
                         print(f"⚠️ 用例 {row.get('Case_ID')} 的 Dynamic_Inputs 解析失败")
                 
@@ -159,6 +161,7 @@ class CaseLoader:
                     dynamic_inputs=dynamic_inputs,
                     session_key=row.get("Session_Key"),
                     expected_action=row.get("Expected_Action", "Reply"),
+                    expected_result=row.get("Expected_Result") or row.get("expected_result"),
                     assert_rules=assert_rules,
                     metadata={"source_file": "xiaofang_fz_chat.csv"}
                 )
@@ -214,6 +217,7 @@ class CaseLoader:
                     order_detail=order_detail,
                     chat_history=chat_history,
                     expected_action=row.get("Expected_Action", "Reply"),
+                    expected_result=row.get("Expected_Result") or row.get("expected_result"),
                     assert_rules=row.get("Assert", ""),
                     metadata={"source_file": "xiaofang_fz_todo.csv"}
                 )
@@ -261,6 +265,7 @@ class CaseLoader:
                     input_query=input_data.get("scene", ""),
                     dynamic_inputs=metadata,
                     expected_action="Reply",
+                    expected_result=json.dumps(expected_output, ensure_ascii=False) if expected_output else None,
                     metadata={
                         "source_file": "exports",
                         "expected_output": expected_output,
@@ -289,6 +294,7 @@ class CaseLoader:
                     case_id=case_id,
                     target_agent=target_agent,
                     scene_description=scene_desc,
+                    expected_result=row.get("Expected_Result") or row.get("expected_result"),
                     metadata={"source_file": "unknown", "raw_data": row}
                 )
 

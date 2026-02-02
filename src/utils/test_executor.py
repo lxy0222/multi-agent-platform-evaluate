@@ -80,6 +80,8 @@ class TestExecutor:
         # 处理聊天历史 - 转为JSON字符串
         if case.chat_history:
             inputs["messages"] = json.dumps(case.chat_history, ensure_ascii=False)
+        # if case.materialInfo:
+        #     inputs["materialInfo"] = json.dumps(case.materialInfo, ensure_ascii=False)
 
         # 构造参数
         params = {
