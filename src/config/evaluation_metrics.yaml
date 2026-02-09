@@ -1,0 +1,192 @@
+# ==========================================
+# 评估维度配置文件
+# 定义模型/Prompt调优的评估维度和计算方法
+# ==========================================
+
+# 评估维度定义
+dimensions:
+  
+  # 1. 准确性维度 (Accuracy)
+  accuracy:
+    name: "准确性"
+    description: "评估AI回复的准确性和正确性"
+    weight: 0.40  # 权重40%
+    metrics:
+      - name: "llm_score"
+        display_name: "LLM评分"
+        description: "评估器Agent给出的综合评分"
+        unit: "分"
+        min: 0
+        max: 100
+        threshold: 80  # 及格线
+        
+      - name: "hard_check_pass_rate"
+        display_name: "硬规则通过率"
+        description: "基于规则的硬性检查通过率"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 100
+        
+      - name: "expected_action_match_rate"
+        display_name: "预期动作命中率"
+        description: "AI执行的动作是否符合预期"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 95
+  
+  # 2. 质量维度 (Quality)
+  quality:
+    name: "回复质量"
+    description: "评估AI回复的质量和完整性"
+    weight: 0.25  # 权重25%
+    metrics:
+      - name: "completeness_score"
+        display_name: "完整性评分"
+        description: "回复是否包含必要的关键信息"
+        unit: "分"
+        min: 0
+        max: 100
+        threshold: 80
+        
+      - name: "fluency_score"
+        display_name: "流畅度评分"
+        description: "语言表达的流畅性和自然度"
+        unit: "分"
+        min: 0
+        max: 100
+        threshold: 85
+        
+      - name: "compliance_score"
+        display_name: "合规性评分"
+        description: "是否符合医疗场景的合规要求"
+        unit: "分"
+        min: 0
+        max: 100
+        threshold: 100
+  
+  # 3. 性能维度 (Performance)
+  performance:
+    name: "性能表现"
+    description: "评估系统的响应速度和稳定性"
+    weight: 0.20  # 权重20%
+    metrics:
+      - name: "avg_response_time"
+        display_name: "平均响应时间"
+        description: "API调用的平均耗时"
+        unit: "ms"
+        min: 0
+        max: 10000
+        threshold: 3000  # 3秒内
+        invert: true  # 数值越小越好
+        
+      - name: "success_rate"
+        display_name: "成功率"
+        description: "请求成功执行的比例"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 99
+        
+      - name: "timeout_rate"
+        display_name: "超时率"
+        description: "请求超时的比例"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 1
+        invert: true
+  
+  # 4. 业务维度 (Business)
+  business:
+    name: "业务指标"
+    description: "评估关键业务场景的表现"
+    weight: 0.15  # 权重15%
+    metrics:
+      - name: "human_transfer_accuracy"
+        display_name: "转人工准确率"
+        description: "需要转人工时正确转接的比例"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 100
+        
+      - name: "intent_recognition_rate"
+        display_name: "意图识别率"
+        description: "正确识别用户意图的比例"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 90
+        
+      - name: "key_info_extraction_rate"
+        display_name: "关键信息提取率"
+        description: "从用户输入中提取关键信息的准确率"
+        unit: "%"
+        min: 0
+        max: 100
+        threshold: 95
+
+# 综合评分计算方法
+overall_score:
+  method: "weighted_average"  # 加权平均
+  formula: "accuracy * 0.4 + quality * 0.25 + performance * 0.2 + business * 0.15"
+
+# 对比评估规则
+comparison_rules:
+  # 改进判定阈值
+  improvement_threshold:
+    score: 5  # 评分提升5分以上视为改进
+    pass_rate: 3  # 通过率提升3%以上视为改进
+    response_time: -200  # 响应时间减少200ms以上视为改进
+  
+  # 退化判定阈值
+  degradation_threshold:
+    score: -5  # 评分下降5分以上视为退化
+    pass_rate: -3  # 通过率下降3%以上视为退化
+    response_time: 500  # 响应时间增加500ms以上视为退化
+  
+  # 显著性等级
+  significance_levels:
+    - level: "critical"
+      name: "严重"
+      score_change: 20  # 变化超过20分
+      pass_rate_change: 10  # 通过率变化超过10%
+      
+    - level: "major"
+      name: "重大"
+      score_change: 10
+      pass_rate_change: 5
+      
+    - level: "minor"
+      name: "轻微"
+      score_change: 5
+      pass_rate_change: 3
+      
+    - level: "negligible"
+      name: "可忽略"
+      score_change: 2
+      pass_rate_change: 1
+
+# 报告配置
+report:
+  # 默认对比的baseline版本
+  default_baseline: "baseline"
+  
+  # 是否生成详细的用例级别对比
+  include_case_details: true
+  
+  # 是否包含趋势图数据
+  include_trends: true
+  
+  # 报告输出格式
+  output_formats:
+    - "markdown"  # Markdown格式
+    - "json"      # JSON格式
+    - "html"      # HTML格式(可选)
+  
+  # 高亮显示阈值
+  highlight_thresholds:
+    improvement: 10  # 改进超过10分高亮显示
+    degradation: -10  # 退化超过10分高亮显示
