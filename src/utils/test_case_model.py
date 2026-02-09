@@ -45,6 +45,14 @@ class UnifiedTestCase:
     expected_result: Optional[str] = None  # 预期回复内容（用于LLM评估）
     assert_rules: List[str] = field(default_factory=list)  # 断言规则列表
     
+    # ========== LLM评估相关 ==========
+    eval_dimensions: List[str] = field(default_factory=list)  # 评估维度列表
+    accuracy_criteria: Optional[str] = None  # 准确性评估标准
+    completeness_criteria: Optional[str] = None  # 完整性评估标准
+    compliance_criteria: Optional[str] = None  # 合规性评估标准
+    tone_criteria: Optional[str] = None  # 语气评估标准
+    min_score_threshold: int = 75  # 最低分数阈值
+    
     # ========== 扩展字段 ==========
     order_detail: Optional[Dict[str, Any]] = None  # 订单详情（用于待办工作流）
     chat_history: Optional[List[Dict[str, Any]]] = None  # 聊天历史
@@ -80,6 +88,12 @@ class UnifiedTestCase:
             "expected_action": self.expected_action,
             "expected_result": self.expected_result,
             "assert_rules": self.assert_rules,
+            "eval_dimensions": self.eval_dimensions,
+            "accuracy_criteria": self.accuracy_criteria,
+            "completeness_criteria": self.completeness_criteria,
+            "compliance_criteria": self.compliance_criteria,
+            "tone_criteria": self.tone_criteria,
+            "min_score_threshold": self.min_score_threshold,
             "order_detail": self.order_detail,
             "chat_history": self.chat_history,
             "metadata": self.metadata,

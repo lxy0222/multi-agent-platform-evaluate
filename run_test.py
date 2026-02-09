@@ -24,9 +24,9 @@ def preserve_history(temp_dir):
 
         # 复制历史数据到本次运行的临时目录
         shutil.copytree(history_src, history_dst)
-        print(f"📜 已加载历史趋势数据: {history_src} -> {history_dst}")
+        print(f"[*] 已加载历史趋势数据: {history_src} -> {history_dst}")
     else:
-        print("ℹ️ 未发现历史趋势数据，本次将作为首次运行")
+        print("[i] 未发现历史趋势数据,本次将作为首次运行")
 
 
 def clean_old_reports(temp_dir, html_dir):
@@ -42,7 +42,7 @@ def clean_old_reports(temp_dir, html_dir):
     os.makedirs(html_dir, exist_ok=True)
 
 
-def build_pytest_args(config, update_baseline=False):
+def build_pytest_args(config):
     """根据配置文件组装 Pytest 命令行参数"""
     runner_conf = config.get("runner")
 
@@ -54,77 +54,81 @@ def build_pytest_args(config, update_baseline=False):
         "-s"
     ]
 
-    # ... (并发、重试等配置保持不变) ...
+    # 并发配置
     concurrency = runner_conf.get("concurrency", 1)
     if concurrency != 1:
         args.extend(["-n", str(concurrency)])
 
+    # 重复执行
     repeat = runner_conf.get("repeat", 1)
     if repeat > 1:
         args.extend([f"--count={repeat}"])
-
-    # 【新增】通过 CLI 参数传递“是否更新基准”的信号
-    # 我们不能直接传给 pytest，通常做法是设环境变量，让测试代码去读
-    if update_baseline:
-        os.environ["UPDATE_BASELINE"] = "true"
-        print("⚠️以此运行将【覆写】基准线文件！")
-    else:
-        if "UPDATE_BASELINE" in os.environ:
-            del os.environ["UPDATE_BASELINE"]
 
     return args
 
 
 def generate_report(temp_dir, html_dir):
     """生成报告"""
-    print("📊 正在生成 HTML 测试报告...")
-    # 注意：不要加 --clean，否则会把我们手动拷进去的 history 删掉
-    # 但为了保证 html 目录干净，我们在 clean_old_reports 里已经删过 html_dir 了
+    print("[*] 正在生成 HTML 测试报告...")
+    # 注意:不要加 --clean,否则会把我们手动拷进去的 history 删掉
+    # 但为了保证 html 目录干净,我们在 clean_old_reports 里已经删过 html_dir 了
     exit_code = os.system(f"allure generate {temp_dir} -o {html_dir} --clean")
     if exit_code == 0:
-        print(f"✅ 报告生成成功: {os.path.abspath(html_dir)}/index.html")
+        print(f"[OK] 报告生成成功: {os.path.abspath(html_dir)}/index.html")
     else:
-        print("⚠️ 报告生成失败")
+        print("[!] 报告生成失败")
 
 
 def main():
-    # 1. 解析命令行参数 (新增)
+    # 1. 解析命令行参数
     parser = argparse.ArgumentParser(description="AI Agent 自动化测试启动器")
-    parser.add_argument("--update-baseline", action="store_true", help="将本次测试结果更新为新的基准线")
+    parser.add_argument("--save-baseline", action="store_true", help="将本次测试结果保存为baseline")
+    parser.add_argument("--baseline-version", type=str, default="baseline", help="Baseline版本名称")
+    parser.add_argument("--compare-baseline", type=str, help="与指定baseline版本对比")
+    parser.add_argument("--baseline-description", type=str, default="", help="Baseline描述信息")
     cli_args = parser.parse_args()
 
     # 2. 加载配置
     try:
         config = ConfigLoader("config/config.yaml")
     except Exception as e:
-        print(f"❌ 配置文件加载失败: {e}")
+        print(f"[X] 配置文件加载失败: {e}")
         sys.exit(1)
 
     runner_conf = config.get("runner")
     temp_dir = runner_conf.get("report_temp_dir", "./reports/temp")
     html_dir = runner_conf.get("report_html_dir", "./reports/html")
 
-    # 3. 历史数据处理 (关键修改)
-    # 在 Pytest 清理 temp 目录前，我们需要先知道历史在哪里
-    # 但 pytest --clean-alluredir 会无情删除 temp 下所有内容
-    # 所以策略是：
-    # A. 先让 Pytest 跑，它会清空 temp 并生成新 results
-    # B. 跑完后，在 generate_report 之前，把上次 html/history 拷到 temp/history
+    # 3. 设置环境变量(供 pytest hooks 使用)
+    if cli_args.save_baseline:
+        os.environ["SAVE_BASELINE"] = "true"
+        os.environ["BASELINE_VERSION"] = cli_args.baseline_version
+        if cli_args.baseline_description:
+            os.environ["BASELINE_DESCRIPTION"] = cli_args.baseline_description
+        print(f"[!] 本次运行将保存为 baseline: {cli_args.baseline_version}")
+    
+    if cli_args.compare_baseline:
+        os.environ["COMPARE_BASELINE"] = cli_args.compare_baseline
+        print(f"[*] 将与 baseline 对比: {cli_args.compare_baseline}")
 
-    clean_old_reports(temp_dir, html_dir)  # 只清 html，不清 temp (由 pytest 清)
+    # 4. 清理旧报告
+    clean_old_reports(temp_dir, html_dir)
 
-    # 4. 执行 Pytest
-    pytest_args = build_pytest_args(config, update_baseline=cli_args.update_baseline)
-    print(f"▶️ 开始执行测试...")
+    # 5. 执行 Pytest
+    pytest_args = build_pytest_args(config)
+    print(f"[>] 开始执行测试...")
     exit_code = pytest.main(pytest_args)
 
-    # 5. 【核心】注入历史趋势数据
-    # Allure 生成报告时，会去 temp/history 找历史数据
-    # 如果找到了，就会在报告里画趋势图
+    # 6. 注入历史趋势数据
     preserve_history(temp_dir)
 
-    # 6. 生成报告
+    # 7. 生成报告
     generate_report(temp_dir, html_dir)
+    
+    # 8. 清理环境变量
+    for key in ["SAVE_BASELINE", "BASELINE_VERSION", "BASELINE_DESCRIPTION", "COMPARE_BASELINE"]:
+        if key in os.environ:
+            del os.environ[key]
 
     sys.exit(exit_code)
 

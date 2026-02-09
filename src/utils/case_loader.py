@@ -153,6 +153,31 @@ class CaseLoader:
                     if assert_str and assert_str.lower() not in ["", "none", "null"]:
                         assert_rules = [assert_str]
                 
+                # 解析评估维度
+                eval_dimensions = []
+                if row.get("Eval_Dimensions"):
+                    try:
+                        eval_dims_str = str(row["Eval_Dimensions"]).strip()
+                        if eval_dims_str and eval_dims_str.lower() not in ["", "none", "null"]:
+                            eval_dimensions = json.loads(eval_dims_str)
+                    except:
+                        # 如果是逗号分隔的字符串
+                        eval_dimensions = [d.strip() for d in str(row["Eval_Dimensions"]).split(",")]
+                
+                # 获取各维度评估标准
+                accuracy_criteria = row.get("Accuracy_Criteria") if row.get("Accuracy_Criteria") else None
+                completeness_criteria = row.get("Completeness_Criteria") if row.get("Completeness_Criteria") else None
+                compliance_criteria = row.get("Compliance_Criteria") if row.get("Compliance_Criteria") else None
+                tone_criteria = row.get("Tone_Criteria") if row.get("Tone_Criteria") else None
+                
+                # 获取最低分数阈值
+                min_score_threshold = 75  # 默认值
+                if row.get("Min_Score_Threshold"):
+                    try:
+                        min_score_threshold = int(row["Min_Score_Threshold"])
+                    except:
+                        pass
+                
                 case = UnifiedTestCase(
                     case_id=row.get("Case_ID", ""),
                     target_agent=row.get("Target_Agent", ""),
@@ -163,6 +188,12 @@ class CaseLoader:
                     expected_action=row.get("Expected_Action", "Reply"),
                     expected_result=row.get("Expected_Result") or row.get("expected_result"),
                     assert_rules=assert_rules,
+                    eval_dimensions=eval_dimensions,
+                    accuracy_criteria=accuracy_criteria,
+                    completeness_criteria=completeness_criteria,
+                    compliance_criteria=compliance_criteria,
+                    tone_criteria=tone_criteria,
+                    min_score_threshold=min_score_threshold,
                     metadata={"source_file": "xiaofang_fz_chat.csv"}
                 )
                 

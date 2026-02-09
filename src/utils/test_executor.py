@@ -1,10 +1,12 @@
 """
 统一的测试执行器
-支持执行不同类型的测试用例（Chat和Workflow）
+支持执行不同类型的测试用例(Chat和Workflow)
 """
 import json
+import time
 from typing import Dict, Any
 from src.utils.test_case_model import UnifiedTestCase, WorkflowType
+from src.utils.logger_config import get_logger
 
 
 class TestExecutor:
@@ -21,7 +23,10 @@ class TestExecutor:
         """
         self.client_factory = client_factory
         self.evaluator = evaluator
-        self.history_cache = history_cache or {}
+        self.history_cache = history_cache if history_cache is not None else {}
+        
+        # 初始化日志
+        self.logger = get_logger("test_executor")
     
     def execute_case(self, case: UnifiedTestCase) -> Dict[str, Any]:
         """
@@ -31,42 +36,77 @@ class TestExecutor:
             case: 统一格式的测试用例
         
         Returns:
-            执行结果字典，包含 response, validation_result 等
+            执行结果字典,包含 response, validation_result, metrics 等
         """
+        self.logger.info(f"开始执行测试用例: {case.case_id}")
+        
+        # 记录开始时间
+        start_time = time.time()
+        
         # 获取客户端
         try:
             client = self.client_factory(case.target_agent)
+            self.logger.debug(f"[{case.case_id}] 获取客户端成功: target_agent={case.target_agent}")
         except ValueError as e:
+            self.logger.error(f"[{case.case_id}] 获取客户端失败: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
-                "case_id": case.case_id
+                "case_id": case.case_id,
+                "metrics": self._calculate_error_metrics(time.time() - start_time)
             }
         
         # 准备请求参数
         request_params = self._prepare_request(case)
+        self.logger.debug(f"[{case.case_id}] 请求参数: {json.dumps(request_params, ensure_ascii=False)}")
         
         # 执行请求
         workflow_type = case.get_workflow_type()
+        request_start = time.time()
+        
         if workflow_type == WorkflowType.CHAT:
+            self.logger.info(f"[{case.case_id}] 执行Chat请求")
             response = self._execute_chat(client, request_params, case)
         else:
+            self.logger.info(f"[{case.case_id}] 执行Workflow请求")
             response = self._execute_workflow(client, request_params, case)
+        
+        request_duration = (time.time() - request_start) * 1000  # 转换为毫秒
+        self.logger.info(f"[{case.case_id}] 请求完成: 耗时={request_duration:.2f}ms")
         
         # 更新会话缓存
         if case.session_key and response.get("conversation_id"):
             self.history_cache[case.session_key] = response["conversation_id"]
+            self.logger.debug(f"[{case.case_id}] 更新会话缓存: session_key={case.session_key}")
         
         # 执行校验
         validation_result = self._validate_response(case, response)
+        
+        # 计算评估指标
+        total_duration = (time.time() - start_time) * 1000
+        metrics = self._calculate_metrics(
+            case=case,
+            response=response,
+            validation=validation_result,
+            request_duration=request_duration,
+            total_duration=total_duration
+        )
+        
+        self.logger.info(
+            f"[{case.case_id}] 执行完成: "
+            f"success={validation_result['passed']}, "
+            f"total_duration={total_duration:.2f}ms"
+        )
         
         return {
             "success": validation_result["passed"],
             "case_id": case.case_id,
             "request": request_params,
             "response": response,
-            "validation": validation_result
+            "validation": validation_result,
+            "metrics": metrics  # 新增:评估指标
         }
+
     
     def _prepare_request(self, case: UnifiedTestCase) -> Dict[str, Any]:
         """准备请求参数"""
@@ -109,14 +149,17 @@ class TestExecutor:
     ) -> Dict[str, Any]:
         """执行Chat类型的请求"""
         try:
+            self.logger.debug(f"[{case.case_id}] 发送Chat消息")
             response = client.send_message(
                 query=params["query"],
                 inputs=params["inputs"],
                 user=params["user"],
                 conversation_id=params.get("conversation_id", "")
             )
+            self.logger.debug(f"[{case.case_id}] Chat响应成功")
             return response
         except Exception as e:
+            self.logger.error(f"[{case.case_id}] Chat请求失败: {str(e)}", exc_info=True)
             return {
                 "error": str(e),
                 "status": "failed"
@@ -130,13 +173,16 @@ class TestExecutor:
     ) -> Dict[str, Any]:
         """执行Workflow类型的请求"""
         try:
+            self.logger.debug(f"[{case.case_id}] 执行Workflow")
             # Workflow只需要inputs和user参数
             response = client.run_workflow(
                 inputs=params["inputs"],
                 user=params["user"]
             )
+            self.logger.debug(f"[{case.case_id}] Workflow响应成功")
             return response
         except Exception as e:
+            self.logger.error(f"[{case.case_id}] Workflow请求失败: {str(e)}", exc_info=True)
             return {
                 "error": str(e),
                 "status": "failed"
@@ -215,6 +261,117 @@ class TestExecutor:
             "errors": []
         }
         
+        structured_data = response.get("json_data", {})
+        
+        # 检查 needHuman 字段
+        need_human = structured_data.get("needHuman")
+        if need_human is not True:
+            result["passed"] = False
+            result["errors"].append(
+                f"期望 needHuman 为 True,实际为 {need_human}"
+            )
+        
+        # 检查 messageList 是否为空
+        msg_list = structured_data.get("messageList", [])
+        for idx, msg in enumerate(msg_list):
+            content = msg.get("content")
+            if content != "":
+                result["passed"] = False
+                result["errors"].append(
+                    f"messageList 第 {idx + 1} 条消息 content 不为空: '{content}'"
+                )
+        
+        return result
+    
+    def _calculate_metrics(
+        self,
+        case: UnifiedTestCase,
+        response: Dict[str, Any],
+        validation: Dict[str, Any],
+        request_duration: float,
+        total_duration: float
+    ) -> Dict[str, Any]:
+        """
+        计算评估指标
+        
+        Args:
+            case: 测试用例
+            response: API响应
+            validation: 校验结果
+            request_duration: 请求耗时(ms)
+            total_duration: 总耗时(ms)
+        
+        Returns:
+            评估指标字典
+        """
+        # 提取AI回复
+        ai_reply = self._extract_reply(response)
+        
+        # 基础指标
+        metrics = {
+            # 性能指标
+            "response_time_ms": round(request_duration, 2),
+            "total_duration_ms": round(total_duration, 2),
+            "is_timeout": request_duration > 5000,  # 5秒超时
+            "is_success": "error" not in response,
+            
+            # 准确性指标
+            "validation_passed": validation["passed"],
+            "hard_check_passed": any(
+                check["type"] == "hard_check" and check["passed"] 
+                for check in validation.get("checks", [])
+            ),
+            "expected_action_match": validation["passed"],
+            
+            # 质量指标
+            "reply_length": len(ai_reply),
+            "is_empty_reply": len(ai_reply.strip()) == 0,
+            "has_think_tag": "<think>" in ai_reply or "</think>" in ai_reply,
+            
+            # 业务指标
+            "human_transfer_required": case.should_check_human_transfer(),
+            "human_transfer_correct": False,
+        }
+        
+        # 检查转人工准确性
+        if case.should_check_human_transfer():
+            human_check = next(
+                (check for check in validation.get("checks", []) 
+                 if check["type"] == "human_transfer_check"),
+                None
+            )
+            if human_check:
+                metrics["human_transfer_correct"] = human_check["passed"]
+        
+        # 解析JSON结构化数据
+        if isinstance(response.get("json_data"), dict):
+            json_data = response["json_data"]
+            metrics["has_structured_output"] = True
+            metrics["need_human"] = json_data.get("needHuman", False)
+        else:
+            metrics["has_structured_output"] = False
+        
+        return metrics
+    
+    def _calculate_error_metrics(self, duration: float) -> Dict[str, Any]:
+        """计算错误情况下的指标"""
+        return {
+            "response_time_ms": round(duration * 1000, 2),
+            "total_duration_ms": round(duration * 1000, 2),
+            "is_timeout": False,
+            "is_success": False,
+            "validation_passed": False,
+            "hard_check_passed": False,
+            "expected_action_match": False,
+            "reply_length": 0,
+            "is_empty_reply": True,
+            "has_think_tag": False,
+            "human_transfer_required": False,
+            "human_transfer_correct": False,
+            "has_structured_output": False
+        }
+
+
         structured_data = response.get("json_data", {})
         
         # 检查 needHuman 字段
