@@ -25,7 +25,8 @@ class DifyClient(BaseAgentClient):
         {
             "api_key": "sk-...",
             "base_url": "https://api.dify.ai/v1",
-            "compatible_mode": True
+            "compatible_mode": True,
+            "timeout": 180  # 可选，默认 180 秒
         }
         """
         super().__init__(config)
@@ -36,6 +37,9 @@ class DifyClient(BaseAgentClient):
 
         # 将 compatible_mode 放入实例变量，也可在调用时覆盖
         self.default_compatible_mode = config.get("compatible_mode", True)
+        
+        # 超时配置（秒），默认 180 秒（3 分钟）
+        self.timeout = config.get("timeout", 180)
 
     def _generate_msg_id(self):
         """生成模拟的 msgId"""
@@ -148,8 +152,8 @@ class DifyClient(BaseAgentClient):
 
         try:
             # 发起请求
-            # timeout 设置为 60秒，防止大模型生成太慢导致脚本挂起
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            # timeout 使用配置的值，防止大模型生成太慢导致脚本挂起
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
 
             # 检查 HTTP 状态码
             if response.status_code != 200:
@@ -226,7 +230,7 @@ class DifyClient(BaseAgentClient):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
             if response.status_code != 200:
                 return {"status": "http_error", "answer": response.text}
             # response.raise_for_status()

@@ -1,9 +1,20 @@
 import pytest
 import os
+import logging
 from src.utils.config_loader import ConfigLoader
 from src.client import AgentClientFactory
 from src.utils.evaluator import Evaluator
 from src.utils.logger_config import get_test_run_logger, log_test_summary
+
+# ========================================
+# 启用详细的 DEBUG 日志（用于诊断问题）
+# ========================================
+# 取消下面这行注释以启用 evaluator 的 DEBUG 日志
+# logging.getLogger("evaluator").setLevel(logging.DEBUG)
+
+# 或者取消下面这行以启用所有模块的 DEBUG 日志
+# logging.basicConfig(level=logging.DEBUG)
+# ========================================
 
 
 # 全局结果收集器

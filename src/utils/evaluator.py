@@ -124,6 +124,10 @@ class Evaluator:
         self.logger.info(f"[{case_id}] 开始LLM评估: scene={scene}")
         self.logger.debug(f"[{case_id}] 评估输入: {json.dumps(agent_inputs, ensure_ascii=False)}")
         
+        # 记录超时配置
+        if hasattr(self.dify_evaluator, 'timeout'):
+            self.logger.debug(f"[{case_id}] Dify 超时设置: {self.dify_evaluator.timeout}秒")
+        
         try:
             # 调用 Dify Evaluator
             response = self.dify_evaluator.run_workflow(
@@ -152,20 +156,35 @@ class Evaluator:
                 )
                 return result
             
-            self.logger.error(f"[{case_id}] 无法解析评估结果: {raw_outputs}")
+            self.logger.error(f"[{case_id}] 无法解析评估结果: {response}")
             return {
                 "pass": False, 
                 "overall_score": 0, 
-                "overall_reason": f"无法解析评估结果: {raw_outputs}",
+                "overall_reason": f"无法解析评估结果: {response}",
                 "dimensions": {}
             }
                 
         except Exception as e:
-            self.logger.error(f"[{case_id}] LLM评估异常: {str(e)}", exc_info=True)
+            error_msg = str(e)
+            self.logger.error(f"[{case_id}] LLM评估异常: {error_msg}", exc_info=True)
+            
+            # 检查是否是超时错误
+            is_timeout = "timeout" in error_msg.lower() or "timed out" in error_msg.lower()
+            
+            if is_timeout:
+                timeout_val = getattr(self.dify_evaluator, 'timeout', 60) if self.dify_evaluator else 60
+                self.logger.warning(
+                    f"[{case_id}] 检测到超时错误！当前超时设置: {timeout_val}秒。"
+                    f"建议在配置文件的 judge.dify_config.timeout 中增加超时时间（如 180 或 300）"
+                )
+                reason = f"Dify 评估超时（{timeout_val}秒），建议增加配置中的 timeout 值"
+            else:
+                reason = f"评估过程发生错误: {error_msg}"
+            
             return {
                 "pass": False, 
                 "overall_score": 0, 
-                "overall_reason": f"评估过程发生错误: {str(e)}",
+                "overall_reason": reason,
                 "dimensions": {}
             }
     
@@ -227,40 +246,3 @@ class Evaluator:
                 result["overall_score"] = round(total_score / total_weight, 1)
         
         return result
-
-    # def soft_check(self, inputs, actual_output, scene):
-    #     """LLM 裁判打分"""
-    #     if not self.client:
-    #         return {
-    #             "pass": True,
-    #             "score": 0,
-    #             "reason": "跳过：未配置 judge.api_key，无法进行 LLM 评分"
-    #         }
-    #     prompt = f"""
-    #     你是一个医疗客服质检员。
-    #     场景: {scene}
-    #     用户输入: {inputs}
-    #     AI回复: {actual_output}
-    #
-    #     请检查：
-    #     1. 语气是否亲切？
-    #     2. 是否符合医疗合规？
-    #     3. 是否回答了用户问题？
-    #
-    #     输出 JSON: {{"pass": true/false, "reason": "原因", "score": 0-10}}
-    #     """
-    #
-    #     try:
-    #         response = self.client.chat.completions.create(
-    #             model="gpt-4o",  # 使用高智商模型做裁判
-    #             messages=[{"role": "user", "content": prompt}],
-    #             response_format={"type": "json_object"}
-    #         )
-    #         content = response.choices[0].message.content
-    #         if content:
-    #             result = json.loads(content)
-    #             return result
-    #         else:
-    #             return {"pass": False, "reason": "Empty response from LLM", "score": 0}
-    #     except Exception as e:
-    #         return {"pass": False, "reason": str(e), "score": 0}

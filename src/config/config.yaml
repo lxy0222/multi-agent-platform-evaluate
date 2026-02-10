@@ -74,6 +74,7 @@ judge:
     platform: "dify"
     api_key: "app-r6DI6naJxcjn7vRKajoyQ5w9"  # 请替换为评估 Agent 的 Key
     base_url: "http://121.43.154.99/v1"
+    timeout: 180  # 超时时间（秒），默认 180 秒（3 分钟）
   # 评分阈值，低于此分数视为失败
   pass_threshold: 8
 
