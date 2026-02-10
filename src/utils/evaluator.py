@@ -144,17 +144,16 @@ class Evaluator:
             
             # 如果成功解析出数据,进行处理
             if raw_outputs:
-                # 需要提取 response 字段
-                if isinstance(raw_outputs, dict) and "response" in raw_outputs:
-                    evaluation_data = raw_outputs["response"]
+                evaluation_data = self._extract_evaluation_json(raw_outputs)
                 
-                result = self._parse_evaluation_result(evaluation_data if evaluation_data else {})
-                self.logger.info(
-                    f"[{case_id}] LLM评估完成: "
-                    f"overall_score={result.get('overall_score', 0)}, "
-                    f"pass={result.get('pass', False)}"
-                )
-                return result
+                if evaluation_data:
+                    result = self._parse_evaluation_result(evaluation_data)
+                    self.logger.info(
+                        f"[{case_id}] LLM评估完成: "
+                        f"overall_score={result.get('overall_score', 0)}, "
+                        f"pass={result.get('pass', False)}"
+                    )
+                    return result
             
             self.logger.error(f"[{case_id}] 无法解析评估结果: {response}")
             return {
@@ -188,6 +187,170 @@ class Evaluator:
                 "dimensions": {}
             }
     
+    def _normalize_boolean(self, value) -> bool:
+        """Normalize boolean-like values from various formats."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            value_lower = value.strip().lower()
+            true_values = {
+                "true", "1", "yes", "y", "pass", "passed", "success", "ok",
+                "是", "通过", "成功"
+            }
+            false_values = {
+                "false", "0", "no", "n", "fail", "failed", "error",
+                "否", "不通过", "失败"
+            }
+            if value_lower in true_values:
+                return True
+            if value_lower in false_values:
+                return False
+        self.logger.warning(
+            f"无法解析布尔值: {value} (type={type(value)}), defaulting to True"
+        )
+        return True
+
+    def _normalize_score(self, value) -> float:
+        """Normalize score values to float in [0, 100]."""
+        if value is None:
+            return 0.0
+        try:
+            if isinstance(value, (int, float)):
+                score = float(value)
+            elif isinstance(value, str):
+                cleaned = value.strip()
+                cleaned = cleaned.replace("%", "").replace("分", "")
+                match = re.search(r"-?\d+(\.\d+)?", cleaned)
+                if not match:
+                    raise ValueError(f"no numeric value in '{value}'")
+                score = float(match.group(0))
+            else:
+                raise ValueError(f"unsupported type: {type(value)}")
+        except Exception as exc:
+            self.logger.warning(f"分数转换失败: {value}, error={exc}")
+            return 0.0
+        if score < 0:
+            return 0.0
+        if score > 100:
+            return 100.0
+        return score
+
+    def _extract_evaluation_json(self, data):
+        """Extract evaluation dict from nested or noisy structures."""
+        if data is None:
+            return {}
+        if isinstance(data, str):
+            try:
+                parsed = json.loads(data)
+                return self._extract_evaluation_json(parsed)
+            except Exception:
+                # best-effort: try to parse a JSON object substring
+                start = data.find("{")
+                end = data.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    try:
+                        parsed = json.loads(data[start:end + 1])
+                        return self._extract_evaluation_json(parsed)
+                    except Exception:
+                        return {}
+                return {}
+        if isinstance(data, list):
+            for item in data:
+                found = self._extract_evaluation_json(item)
+                if found:
+                    return found
+            return {}
+        if not isinstance(data, dict):
+            return {}
+
+        known_keys = {"overall_pass", "overall_score", "overall_reason", "dimensions", "suggestions"}
+        if any(k in data for k in known_keys):
+            return data
+
+        if "properties" in data and isinstance(data.get("properties"), dict):
+            return self._extract_evaluation_json(data["properties"])
+        if "response" in data and isinstance(data.get("response"), dict):
+            return self._extract_evaluation_json(data["response"])
+        if "entry" in data and isinstance(data.get("entry"), dict):
+            return self._extract_evaluation_json(data["entry"])
+
+        for value in data.values():
+            found = self._extract_evaluation_json(value)
+            if found:
+                return found
+        return {}
+
+    def _extract_structured_data(self, data: dict) -> dict:
+        """Extract structured evaluation data from flattened/noisy dicts."""
+        if not isinstance(data, dict):
+            return {}
+
+        cleaned = {}
+        key_fields = {
+            "overall_pass", "overall_score", "overall_reason",
+            "dimensions", "suggestions", "entry", "properties"
+        }
+
+        def normalize_key(key: str):
+            if not isinstance(key, str):
+                return key
+            for target in ["overall_pass", "overall_score", "overall_reason", "dimensions", "suggestions"]:
+                if target in key:
+                    return target
+            return key
+
+        def is_schema_dict(value):
+            if not isinstance(value, dict):
+                return False
+            if "type" in value and ("description" in value or "properties" in value):
+                return True
+            return False
+
+        if "dimensions" in data and isinstance(data.get("dimensions"), dict):
+            if not is_schema_dict(data.get("dimensions")):
+                if "overall_pass" in data and is_schema_dict(data.get("overall_pass")):
+                    pass
+                else:
+                    has_real_overall = False
+                    for k in ["overall_pass", "overall_score", "overall_reason"]:
+                        if k in data and not is_schema_dict(data.get(k)):
+                            has_real_overall = True
+                            break
+                    if has_real_overall:
+                        return data
+
+        for k, v in data.items():
+            if isinstance(v, str):
+                v_lower = v.lower()
+                if len(v) > 500 or "let's" in v_lower or "wait" in v_lower or "think>" in v_lower:
+                    continue
+
+            norm_key = normalize_key(k)
+            if norm_key in key_fields:
+                if is_schema_dict(v) and norm_key != "dimensions":
+                    continue
+                if norm_key in cleaned and is_schema_dict(cleaned.get(norm_key)) and not is_schema_dict(v):
+                    cleaned[norm_key] = v
+                else:
+                    cleaned[norm_key] = v
+            elif isinstance(v, (int, float)):
+                cleaned[norm_key] = v
+            elif isinstance(v, str) and len(v) <= 500:
+                cleaned[norm_key] = v
+            elif isinstance(v, (list, dict)):
+                cleaned[norm_key] = v
+
+        for nested_key in ["entry", "properties"]:
+            if nested_key in cleaned and isinstance(cleaned[nested_key], dict):
+                nested = self._extract_structured_data(cleaned[nested_key])
+                for k, v in nested.items():
+                    if k not in cleaned or k == "dimensions":
+                        cleaned[k] = v
+
+        return cleaned
+
     def _parse_evaluation_result(self, data: dict) -> dict:
         """
         解析并标准化评估结果
@@ -198,31 +361,50 @@ class Evaluator:
         Returns:
             标准化的评估结果
         """
+        if data is None:
+            data = {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+
+        if not isinstance(data, dict):
+            data = {}
+
+        cleaned_data = self._extract_structured_data(data)
+
         # 标准化结果结构
         result = {
-            "pass": data.get("overall_pass", True),
-            "overall_score": data.get("overall_score", 0),
-            "overall_reason": data.get("overall_reason", ""),
+            "pass": self._normalize_boolean(cleaned_data.get("overall_pass", True)),
+            "overall_score": self._normalize_score(cleaned_data.get("overall_score", 0)),
+            "overall_reason": str(cleaned_data.get("overall_reason", "")),
             "dimensions": {},
-            "suggestions": data.get("suggestions", [])
+            "suggestions": cleaned_data.get("suggestions", [])
         }
+
+        if isinstance(result["suggestions"], str):
+            result["suggestions"] = [result["suggestions"]]
+        elif not isinstance(result["suggestions"], list):
+            result["suggestions"] = []
         
         # 解析各维度评分
-        dimensions_data = data.get("dimensions", {})
-        for dim_name, dim_data in dimensions_data.items():
-            if isinstance(dim_data, dict):
-                result["dimensions"][dim_name] = {
-                    "score": dim_data.get("score", 0),
-                    "reason": dim_data.get("reason", ""),
-                    "details": dim_data.get("details", "")
-                }
-            elif isinstance(dim_data, (int, float)):
-                # 兼容简化格式
-                result["dimensions"][dim_name] = {
-                    "score": dim_data,
-                    "reason": "",
-                    "details": ""
-                }
+        dimensions_data = cleaned_data.get("dimensions", {})
+        if isinstance(dimensions_data, dict):
+            for dim_name, dim_data in dimensions_data.items():
+                if isinstance(dim_data, dict):
+                    result["dimensions"][dim_name] = {
+                        "score": self._normalize_score(dim_data.get("score", 0)),
+                        "reason": str(dim_data.get("reason", "")),
+                        "details": str(dim_data.get("details", ""))
+                    }
+                elif isinstance(dim_data, (int, float, str)):
+                    # 兼容简化格式
+                    result["dimensions"][dim_name] = {
+                        "score": self._normalize_score(dim_data),
+                        "reason": "",
+                        "details": ""
+                    }
         
         # 如果没有明确的overall_score，根据维度分数计算
         if result["overall_score"] == 0 and result["dimensions"]:

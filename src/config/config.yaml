@@ -88,7 +88,7 @@ report:
 runner:
   # 并发执行线程数 (依赖 pytest-xdist)
   # 设置为 "auto" 则自动使用 CPU 核心数，设置为 1 则单线程顺序执行
-  concurrency: 2
+  concurrency: 1
 
   # 重复执行
   repeat: 1
