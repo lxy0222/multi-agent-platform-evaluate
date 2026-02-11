@@ -83,6 +83,20 @@ report:
   title: "小方智能体回归测试报告"
   language: "zh-CN"
 
+# Baseline 配置（支持按智能体区分）
+baseline:
+  # 是否启用按智能体保存/对比 baseline
+  per_agent: true
+  # 默认 baseline 名称前缀
+  default: "baseline"
+  # 按智能体指定 baseline 名称（可选）
+  by_agent:
+    first_visit: "baseline_first_visit"
+    todo_exec_follow: "baseline_todo_exec_follow"
+    todo_exec_first: "baseline_todo_exec_first"
+    follow_up: "baseline_follow_up"
+    patient_summary: "baseline_patient_summary"
+
 
 # 测试执行策略配置
 runner:
@@ -112,8 +126,8 @@ runner:
 test_data:
   # 要加载的测试文件列表
   files:
-    # - "xiaofang_fz_chat.csv"
-    - "patient_summary_chat.csv"
+#     - "xiaofang_fz_chat.csv"
+     - "patient_summary_chat.csv"
   
   # 过滤条件（可选）
   filter:

@@ -24,6 +24,34 @@ test_results_collector = {}
 session_logger = None
 
 
+def _group_results_by_agent(results: dict) -> dict:
+    grouped = {}
+    for case_id, result in results.items():
+        agent_key = result.get("target_agent") or "unknown"
+        grouped.setdefault(agent_key, {})[case_id] = result
+    return grouped
+
+
+def _get_baseline_config(config: ConfigLoader) -> dict:
+    baseline_conf = config.get("baseline", {}) or {}
+    per_agent = bool(baseline_conf.get("per_agent", False))
+    mapping = baseline_conf.get("by_agent", {}) or {}
+    default_baseline = baseline_conf.get("default", "baseline")
+    return {
+        "per_agent": per_agent,
+        "mapping": mapping if isinstance(mapping, dict) else {},
+        "default_baseline": default_baseline
+    }
+
+
+def _resolve_baseline_version(agent_key: str, baseline_conf: dict) -> str:
+    mapping = baseline_conf.get("mapping", {})
+    default_baseline = baseline_conf.get("default_baseline", "baseline")
+    if isinstance(mapping, dict) and mapping.get(agent_key):
+        return mapping[agent_key]
+    return f"{default_baseline}_{agent_key}"
+
+
 @pytest.fixture(scope="session")
 def results_collector():
     """
@@ -119,36 +147,71 @@ def pytest_sessionfinish(session, exitstatus):
     if session_logger and test_results_collector:
         log_test_summary(session_logger, test_results_collector)
     
+    # 读取 baseline 配置
+    baseline_conf = None
+    config = None
+    try:
+        config = ConfigLoader("config/config.yaml")
+        baseline_conf = _get_baseline_config(config)
+    except Exception:
+        baseline_conf = {"per_agent": False, "mapping": {}, "default_baseline": "baseline"}
+
     # 如果设置了环境变量，保存为baseline
     if os.environ.get("SAVE_BASELINE"):
-        version_name = os.environ.get("BASELINE_VERSION", "baseline")
+        version_name = os.environ.get("BASELINE_VERSION", baseline_conf.get("default_baseline", "baseline"))
         
         if test_results_collector:
             manager = BaselineManager()
             
             # 获取配置元数据
             try:
-                config = ConfigLoader("config/config.yaml")
+                if not config:
+                    raise RuntimeError("config not loaded")
                 metadata = {
                     "model": config.get("judge.model", "unknown"),
                     "test_count": len(test_results_collector),
                     "timestamp": datetime.now().isoformat(),
                     "description": os.environ.get("BASELINE_DESCRIPTION", "")
                 }
-            except:
+            except Exception:
                 metadata = {
                     "test_count": len(test_results_collector),
                     "timestamp": datetime.now().isoformat()
                 }
             
-            manager.save_baseline(
-                version_name=version_name,
-                results=test_results_collector,
-                metadata=metadata
-            )
-            if session_logger:
-                session_logger.info(f"测试结果已保存为 baseline: {version_name}")
-            print(f"\n[OK] 测试结果已保存为 baseline: {version_name}")
+            auto_mode = False
+            if baseline_conf.get("per_agent", False):
+                if str(version_name).lower() in ["auto", "by_agent"]:
+                    auto_mode = True
+                elif version_name == baseline_conf.get("default_baseline", "baseline"):
+                    auto_mode = True
+
+            if auto_mode:
+                grouped_results = _group_results_by_agent(test_results_collector)
+                for agent_key, agent_results in grouped_results.items():
+                    if not agent_results:
+                        continue
+                    agent_version = _resolve_baseline_version(agent_key, baseline_conf)
+                    agent_metadata = dict(metadata)
+                    agent_metadata["agent"] = agent_key
+                    agent_metadata["test_count"] = len(agent_results)
+                    manager.save_baseline(
+                        version_name=agent_version,
+                        results=agent_results,
+                        metadata=agent_metadata
+                    )
+                    if session_logger:
+                        session_logger.info(f"测试结果已保存为 baseline: {agent_version} (agent={agent_key})")
+                    print(f"\n[OK] 测试结果已保存为 baseline: {agent_version} (agent={agent_key})")
+            else:
+                manager.save_baseline(
+                    version_name=version_name,
+                    results=test_results_collector,
+                    metadata=metadata
+                )
+                if session_logger:
+                    session_logger.info(f"测试结果已保存为 baseline: {version_name}")
+                print(f"\n[OK] 测试结果已保存为 baseline: {version_name}")
     
     # 如果设置了对比baseline
     if os.environ.get("COMPARE_BASELINE"):
@@ -161,32 +224,64 @@ def pytest_sessionfinish(session, exitstatus):
             
             # 获取当前配置元数据
             try:
-                config = ConfigLoader("config/config.yaml")
+                if not config:
+                    raise RuntimeError("config not loaded")
                 current_metadata = {
                     "model": config.get("judge.model", "unknown"),
                     "test_count": len(test_results_collector),
                     "timestamp": datetime.now().isoformat()
                 }
-            except:
+            except Exception:
                 current_metadata = {
                     "test_count": len(test_results_collector),
                     "timestamp": datetime.now().isoformat()
                 }
             
-            # 执行对比
-            comparison = manager.compare_with_baseline(
-                current_results=test_results_collector,
-                baseline_version=baseline_version,
-                metadata=current_metadata
-            )
-            
-            # 生成对比报告
-            if comparison.get("success", True):
-                report_path = f"reports/comparison_{baseline_version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                manager.generate_comparison_report(comparison, report_path)
-                if session_logger:
-                    session_logger.info(f"对比报告已生成: {report_path}")
-                print(f"\n[*] 对比报告已生成: {report_path}")
+            auto_mode = False
+            if baseline_conf.get("per_agent", False):
+                if str(baseline_version).lower() in ["auto", "by_agent"]:
+                    auto_mode = True
+                elif baseline_version == baseline_conf.get("default_baseline", "baseline"):
+                    auto_mode = True
+
+            if auto_mode:
+                grouped_results = _group_results_by_agent(test_results_collector)
+                for agent_key, agent_results in grouped_results.items():
+                    if not agent_results:
+                        continue
+                    agent_version = _resolve_baseline_version(agent_key, baseline_conf)
+                    agent_metadata = dict(current_metadata)
+                    agent_metadata["agent"] = agent_key
+                    agent_metadata["test_count"] = len(agent_results)
+                    comparison = manager.compare_with_baseline(
+                        current_results=agent_results,
+                        baseline_version=agent_version,
+                        metadata=agent_metadata
+                    )
+                    if comparison.get("success", True):
+                        report_path = (
+                            f"reports/comparison_{agent_version}_{agent_key}_"
+                            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        )
+                        manager.generate_comparison_report(comparison, report_path)
+                        if session_logger:
+                            session_logger.info(f"对比报告已生成: {report_path}")
+                        print(f"\n[*] 对比报告已生成: {report_path}")
+            else:
+                # 执行对比
+                comparison = manager.compare_with_baseline(
+                    current_results=test_results_collector,
+                    baseline_version=baseline_version,
+                    metadata=current_metadata
+                )
+                
+                # 生成对比报告
+                if comparison.get("success", True):
+                    report_path = f"reports/comparison_{baseline_version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                    manager.generate_comparison_report(comparison, report_path)
+                    if session_logger:
+                        session_logger.info(f"对比报告已生成: {report_path}")
+                    print(f"\n[*] 对比报告已生成: {report_path}")
     
     # 结束日志
     if session_logger:
