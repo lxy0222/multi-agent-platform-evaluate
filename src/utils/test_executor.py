@@ -4,7 +4,7 @@
 """
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from src.utils.test_case_model import UnifiedTestCase, WorkflowType
 from src.utils.logger_config import get_logger
 
@@ -12,7 +12,7 @@ from src.utils.logger_config import get_logger
 class TestExecutor:
     """测试执行器"""
     
-    def __init__(self, client_factory, evaluator, history_cache: Dict[str, str] = None):
+    def __init__(self, client_factory, evaluator, history_cache: Optional[Dict[str, str]] = None):
         """
         初始化执行器
         
@@ -248,7 +248,13 @@ class TestExecutor:
         if isinstance(structured_data, dict):
             msg_list = structured_data.get("messageList", [])
             if msg_list:
-                return msg_list[0].get("content", "")
+                # 拼接所有消息内容
+                contents = []
+                for msg in msg_list:
+                    content = msg.get("content", "")
+                    if content:  # 只添加非空内容
+                        contents.append(content)
+                return "\n\n".join(contents) if contents else ""
         
         # 尝试从 answer 中提取
         return response.get("answer", "")
@@ -370,27 +376,4 @@ class TestExecutor:
             "human_transfer_correct": False,
             "has_structured_output": False
         }
-
-
-        structured_data = response.get("json_data", {})
-        
-        # 检查 needHuman 字段
-        need_human = structured_data.get("needHuman")
-        if need_human is not True:
-            result["passed"] = False
-            result["errors"].append(
-                f"期望 needHuman 为 True，实际为 {need_human}"
-            )
-        
-        # 检查 messageList 是否为空
-        msg_list = structured_data.get("messageList", [])
-        for idx, msg in enumerate(msg_list):
-            content = msg.get("content")
-            if content != "":
-                result["passed"] = False
-                result["errors"].append(
-                    f"messageList 第 {idx + 1} 条消息 content 不为空: '{content}'"
-                )
-        
-        return result
 

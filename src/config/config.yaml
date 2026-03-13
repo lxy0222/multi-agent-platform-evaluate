@@ -27,7 +27,7 @@ agents:
   first_visit:
     platform: "dify"                        # 【必填】用于识别平台
     api_key: "app-SGOScn0t6ASzcZgvhEtvxCAA"
-    mode: "chat"                            # Dify特有: chat 或 workflow
+    mode: "chat"
     # base_url: 可以不填，代码里会自动继承 defaults
 
   # --- 场景2: Dify 上的复诊执行待办 (Workflow类型) ---
@@ -127,7 +127,8 @@ test_data:
   # 要加载的测试文件列表
   files:
 #     - "xiaofang_fz_chat.csv"
-     - "patient_summary_chat.csv"
+     - "xiaofang_cz_chat.csv"
+#     - "patient_summary_chat.csv"
   
   # 过滤条件（可选）
   filter:

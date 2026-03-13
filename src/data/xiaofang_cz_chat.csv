@@ -1,0 +1,11 @@
+Case_ID,Target_Agent,Session_Key,场景描述,Input_Query,Dynamic_Inputs,Expected_Action,Assert,Expected_Result
+CASE_01,first_visit,CHAT_A,患者开场直接说症状，测试 AI 是否会优先补全年龄和本人确认,我最近经常偏头痛，好难受,"{
+  ""patientId"": null,
+  ""externalUserId"": ""tester_001"",
+  ""messages"": ""[]"",
+  ""weComName"": ""测试_症状开场"",
+  ""requestChannel"": ""企微"",
+  ""sys.query"": ""[{\""content\"":\""我最近经常偏头痛，好难受\"",\""msgId\"":\""q001\"",\""msgType\"":\""text\""}]"",
+  ""sys.app_id"": ""2a4ec816-140f-4b05-bdf3-16ba3a16af91"",
+  ""sys.dialogue_count"": 0
+}",Reply,""
