@@ -158,31 +158,6 @@ class TestUnifiedFramework:
         # 步骤4: LLM 智能评估
         # ==========================================
         with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
-            # # 准备参数
-            # context_inputs = case.dynamic_inputs
-            #
-            # # 准备维度评估标准
-            # dimension_criteria = {}
-            # if case.accuracy_criteria:
-            #     dimension_criteria["accuracy_criteria"] = case.accuracy_criteria
-            # if case.completeness_criteria:
-            #     dimension_criteria["completeness_criteria"] = case.completeness_criteria
-            # if case.compliance_criteria:
-            #     dimension_criteria["compliance_criteria"] = case.compliance_criteria
-            # if case.tone_criteria:
-            #     dimension_criteria["tone_criteria"] = case.tone_criteria
-            #
-            # # 调用评估器
-            # llm_result = evaluator.llm_evaluate(
-            #     case_id = case.case_id,
-            #     inputs=case.input_query,
-            #     actual_output=ai_reply,
-            #     scene=case.scene_description,
-            #     expected_output=case.expected_result,
-            #     context_inputs=context_inputs,
-            #     eval_dimensions=case.eval_dimensions if case.eval_dimensions else None,
-            #     dimension_criteria=dimension_criteria if dimension_criteria else None
-            # )
             
             # 记录评估结果
             case_logger.log_evaluation(result['llm_evaluation'])
