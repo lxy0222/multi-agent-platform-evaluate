@@ -1,5 +1,6 @@
 import re
 import json
+from typing import Optional
 from src.client.dify_client import DifyClient
 from src.utils.logger_config import get_logger
 
@@ -69,7 +70,9 @@ class Evaluator:
         expected_output=None, 
         context_inputs=None,
         eval_dimensions=None,
-        dimension_criteria=None
+        dimension_criteria=None,
+        dimension_weights=None,
+        test_case_specific_metrics=None
     ):
         """
         使用 Dify Agent 进行多维度评估
@@ -80,11 +83,13 @@ class Evaluator:
             actual_output: AI 实际的回复
             scene: 场景描述
             expected_output: 预期的回复或动作，作为"标准答案"参考
-            context_inputs: 对话的上下文变量，可能包含关键病历信息
-            eval_dimensions: 需要评估的维度列表，如 ["accuracy", "completeness"]
-            dimension_criteria: 各维度的评估标准，如 {"accuracy_criteria": "必须正确识别症状"}
-        
-        Returns:
+             context_inputs: 对话的上下文变量，可能包含关键病历信息
+             eval_dimensions: 需要评估的维度列表，如 ["accuracy", "completeness"]
+             dimension_criteria: 各维度的评估标准，如 {"accuracy": "必须正确识别症状"}
+             dimension_weights: 各维度权重，如 {"accuracy": 0.4, "completeness": 0.3}
+             test_case_specific_metrics: 测试用例特定的补充评估指标
+         
+         Returns:
             {
                 "pass": true/false,
                 "overall_score": 85,
@@ -115,11 +120,26 @@ class Evaluator:
             "eval_dimensions": json.dumps(eval_dimensions or ["accuracy", "completeness", "compliance", "tone"], ensure_ascii=False)
         }
         
-        # 添加各维度的评估标准
+        # 添加各维度的评估标准（支持新格式）
         if dimension_criteria:
+            # 新格式：{"accuracy": "必须正确识别症状"}
+            # 旧格式：{"accuracy_criteria": "必须正确识别症状"}
             for key, value in dimension_criteria.items():
                 if value:  # 只添加非空的标准
-                    agent_inputs[key] = value
+                    if "_criteria" in key:
+                        # 旧格式，直接添加
+                        agent_inputs[key] = value
+                    else:
+                        # 新格式，转换为旧格式
+                        agent_inputs[f"{key}_criteria"] = value
+        
+        # 添加维度权重（如果有）
+        if dimension_weights:
+            agent_inputs["dimension_weights"] = json.dumps(dimension_weights, ensure_ascii=False)
+        
+        # 添加测试用例特定的评估指标（如果有）
+        if test_case_specific_metrics:
+            agent_inputs["test_case_specific_metrics"] = json.dumps(test_case_specific_metrics, ensure_ascii=False)
         
         self.logger.info(f"[{case_id}] 开始LLM评估: scene={scene}")
         self.logger.debug(f"[{case_id}] 评估输入: {json.dumps(agent_inputs, ensure_ascii=False)}")
@@ -147,7 +167,7 @@ class Evaluator:
                 evaluation_data = self._extract_evaluation_json(raw_outputs)
                 
                 if evaluation_data:
-                    result = self._parse_evaluation_result(evaluation_data)
+                    result = self._parse_evaluation_result(evaluation_data, dimension_weights)
                     self.logger.info(
                         f"[{case_id}] LLM评估完成: "
                         f"overall_score={result.get('overall_score', 0)}, "
@@ -351,7 +371,7 @@ class Evaluator:
 
         return cleaned
 
-    def _parse_evaluation_result(self, data: dict) -> dict:
+    def _parse_evaluation_result(self, data: dict, dimension_weights: Optional[dict] = None) -> dict:
         """
         解析并标准化评估结果
         
@@ -408,8 +428,8 @@ class Evaluator:
         
         # 如果没有明确的overall_score，根据维度分数计算
         if result["overall_score"] == 0 and result["dimensions"]:
-            # 使用配置的权重计算综合分数
-            weights = {
+            # 使用传入的维度权重或默认权重计算综合分数
+            weights = dimension_weights or {
                 "accuracy": 0.40,
                 "completeness": 0.25,
                 "compliance": 0.20,

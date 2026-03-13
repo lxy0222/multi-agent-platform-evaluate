@@ -82,6 +82,15 @@ class TestExecutor:
         # 执行校验
         validation_result = self._validate_response(case, response)
         
+        # 执行LLM评估（如果配置了评估器）
+        llm_evaluation_result = None
+        if hasattr(self.evaluator, 'llm_evaluate') and response.get("answer"):
+            try:
+                llm_evaluation_result = self._perform_llm_evaluation(case, response)
+                self.logger.info(f"[{case.case_id}] LLM评估完成: score={llm_evaluation_result.get('overall_score', 0)}")
+            except Exception as e:
+                self.logger.error(f"[{case.case_id}] LLM评估失败: {str(e)}")
+        
         # 计算评估指标
         total_duration = (time.time() - start_time) * 1000
         metrics = self._calculate_metrics(
@@ -98,14 +107,21 @@ class TestExecutor:
             f"total_duration={total_duration:.2f}ms"
         )
         
-        return {
+        result = {
             "success": validation_result["passed"],
             "case_id": case.case_id,
             "request": request_params,
             "response": response,
             "validation": validation_result,
-            "metrics": metrics  # 新增:评估指标
+            "metrics": metrics,  # 新增:评估指标
+            "llm_evaluation": llm_evaluation_result
         }
+        
+        # 如果LLM评估失败，不影响整体成功状态，但记录在结果中
+        if llm_evaluation_result and not llm_evaluation_result.get("pass", True):
+            self.logger.warning(f"[{case.case_id}] LLM评估未通过: {llm_evaluation_result.get('overall_reason', '')}")
+        
+        return result
 
     
     def _prepare_request(self, case: UnifiedTestCase) -> Dict[str, Any]:
@@ -358,6 +374,55 @@ class TestExecutor:
             metrics["has_structured_output"] = False
         
         return metrics
+    
+    def _perform_llm_evaluation(
+        self, 
+        case: UnifiedTestCase, 
+        response: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        执行LLM评估
+        
+        Args:
+            case: 测试用例
+            response: API响应
+            
+        Returns:
+            LLM评估结果
+        """
+        # 提取AI回复
+        ai_reply = self._extract_reply(response)
+        
+        # 获取测试用例的增强评估输入
+        eval_inputs = case.get_enhanced_evaluation_inputs()
+        
+        # 准备评估参数
+        eval_params = {
+            "case_id": case.case_id,
+            "inputs": case.input_query,
+            "actual_output": ai_reply,
+            "scene": case.scene_description,
+            "expected_output": case.expected_result,
+            "context_inputs": case.dynamic_inputs,
+            "eval_dimensions": eval_inputs.get("eval_dimensions", []),
+            "dimension_criteria": eval_inputs.get("dimension_criteria", {})
+        }
+        
+        # 如果有测试用例特定的评估指标，添加到评估参数中
+        if eval_inputs.get("test_case_specific_metrics"):
+            eval_params["test_case_specific_metrics"] = eval_inputs["test_case_specific_metrics"]
+        
+        # 如果有维度权重，也传递给评估器
+        if eval_inputs.get("dimension_weights"):
+            eval_params["dimension_weights"] = eval_inputs["dimension_weights"]
+        
+        # 调用评估器
+        if hasattr(self.evaluator, 'medical_llm_evaluate'):
+            # 使用医疗评估器
+            return self.evaluator.medical_llm_evaluate(**eval_params)
+        else:
+            # 使用基础评估器
+            return self.evaluator.llm_evaluate(**eval_params)
     
     def _calculate_error_metrics(self, duration: float) -> Dict[str, Any]:
         """计算错误情况下的指标"""

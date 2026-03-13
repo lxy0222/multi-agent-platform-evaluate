@@ -47,11 +47,14 @@ class UnifiedTestCase:
     
     # ========== LLM评估相关 ==========
     eval_dimensions: List[str] = field(default_factory=list)  # 评估维度列表
-    accuracy_criteria: Optional[str] = None  # 准确性评估标准
-    completeness_criteria: Optional[str] = None  # 完整性评估标准
-    compliance_criteria: Optional[str] = None  # 合规性评估标准
-    tone_criteria: Optional[str] = None  # 语气评估标准
+    dimension_criteria: Dict[str, str] = field(default_factory=dict)  # 各维度评估标准，如 {"accuracy": "必须正确识别症状"}
+    accuracy_criteria: Optional[str] = None  # 准确性评估标准（兼容旧版）
+    completeness_criteria: Optional[str] = None  # 完整性评估标准（兼容旧版）
+    compliance_criteria: Optional[str] = None  # 合规性评估标准（兼容旧版）
+    tone_criteria: Optional[str] = None  # 语气评估标准（兼容旧版）
     min_score_threshold: int = 75  # 最低分数阈值
+    dimension_weights: Dict[str, float] = field(default_factory=dict)  # 各维度权重，如 {"accuracy": 0.4, "completeness": 0.3}
+    test_case_specific_metrics: Dict[str, Any] = field(default_factory=dict)  # 测试用例特定的补充评估指标
     
     # ========== 扩展字段 ==========
     order_detail: Optional[Dict[str, Any]] = None  # 订单详情（用于待办工作流）
@@ -73,6 +76,18 @@ class UnifiedTestCase:
         # 自动添加标签
         if not self.tags:
             self.tags = [self.target_agent, self.expected_action]
+        
+        # 兼容旧版评估标准：将独立的评估标准合并到 dimension_criteria
+        if not self.dimension_criteria:
+            self.dimension_criteria = {}
+            if self.accuracy_criteria:
+                self.dimension_criteria["accuracy"] = self.accuracy_criteria
+            if self.completeness_criteria:
+                self.dimension_criteria["completeness"] = self.completeness_criteria
+            if self.compliance_criteria:
+                self.dimension_criteria["compliance"] = self.compliance_criteria
+            if self.tone_criteria:
+                self.dimension_criteria["tone"] = self.tone_criteria
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
@@ -89,11 +104,14 @@ class UnifiedTestCase:
             "expected_result": self.expected_result,
             "assert_rules": self.assert_rules,
             "eval_dimensions": self.eval_dimensions,
+            "dimension_criteria": self.dimension_criteria,
             "accuracy_criteria": self.accuracy_criteria,
             "completeness_criteria": self.completeness_criteria,
             "compliance_criteria": self.compliance_criteria,
             "tone_criteria": self.tone_criteria,
             "min_score_threshold": self.min_score_threshold,
+            "dimension_weights": self.dimension_weights,
+            "test_case_specific_metrics": self.test_case_specific_metrics,
             "order_detail": self.order_detail,
             "chat_history": self.chat_history,
             "metadata": self.metadata,
@@ -124,4 +142,14 @@ class UnifiedTestCase:
             return str(self.dynamic_inputs["sys.user_id"])
         # 默认使用 case_id
         return f"qa_{self.case_id}"
+    
+    def get_enhanced_evaluation_inputs(self) -> Dict[str, Any]:
+        """获取增强的评估输入数据"""
+        return {
+            "eval_dimensions": self.eval_dimensions,
+            "dimension_criteria": self.dimension_criteria,
+            "dimension_weights": self.dimension_weights,
+            "test_case_specific_metrics": self.test_case_specific_metrics,
+            "min_score_threshold": self.min_score_threshold
+        }
 

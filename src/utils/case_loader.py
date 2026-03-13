@@ -164,7 +164,65 @@ class CaseLoader:
                         # 如果是逗号分隔的字符串
                         eval_dimensions = [d.strip() for d in str(row["Eval_Dimensions"]).split(",")]
                 
-                # 获取各维度评估标准
+                # 获取配置文件维度的具体评估标准
+                dimension_criteria = {}
+                
+                # 读取主要维度的具体标准（整体覆盖）
+                # 格式：Medical_Capability_Criteria, Service_Capability_Criteria, Safety_Capability_Criteria, System_Capability_Criteria
+                for dim_key in ["Medical_Capability", "Service_Capability", "Safety_Capability", "System_Capability"]:
+                    criteria_key = f"{dim_key}_Criteria"
+                    criteria_value = row.get(criteria_key)
+                    if criteria_value and str(criteria_value).strip():
+                        # 转换为小写带下划线的格式：medical_capability
+                        dim_name = dim_key.lower()
+                        dimension_criteria[dim_name] = str(criteria_value).strip()
+                
+                # 读取具体metric的标准（按配置文件中的metric name）
+                # 医疗能力的具体metrics
+                medical_metrics = [
+                    ("Medical_Triage_Accuracy", "triage_accuracy"),
+                    ("Medical_Symptom_Accuracy", "symptom_consultation_accuracy"),
+                    ("Medical_Human_Transfer", "human_transfer_accuracy"),
+                    ("Medical_Knowledge_Coverage", "medical_knowledge_coverage")
+                ]
+                
+                # 服务能力的具体metrics
+                service_metrics = [
+                    ("Service_Emotional_Support", "emotional_support_score"),
+                    ("Service_Communication_Naturalness", "communication_naturalness"),
+                    ("Service_Care_Appropriateness", "care_appropriateness"),
+                    ("Service_Response_Helpfulness", "response_helpfulness")
+                ]
+                
+                # 安全能力的具体metrics
+                safety_metrics = [
+                    ("Safety_Medical_Safety", "medical_safety_score"),
+                    ("Safety_Forbidden_Behavior", "forbidden_behavior_rate"),
+                    ("Safety_Over_Commitment", "over_commitment_detection"),
+                    ("Safety_Risk_Avoidance", "risk_avoidance_score")
+                ]
+                
+                # 系统能力的具体metrics
+                system_metrics = [
+                    ("System_Response_Time", "response_time"),
+                    ("System_Success_Rate", "success_rate"),
+                    ("System_Timeout_Rate", "timeout_rate"),
+                    ("System_Stability", "system_stability")
+                ]
+                
+                # 初始化test_case_specific_metrics
+                test_case_specific_metrics = {}
+                
+                # 检查并读取所有具体的metric标准
+                all_metrics = medical_metrics + service_metrics + safety_metrics + system_metrics
+                for csv_col, metric_name in all_metrics:
+                    criteria_key = f"{csv_col}_Criteria"
+                    criteria_value = row.get(criteria_key)
+                    if criteria_value and str(criteria_value).strip():
+                        # 将具体的metric标准存储到test_case_specific_metrics中
+                        test_case_specific_metrics[metric_name] = str(criteria_value).strip()
+                
+                # 兼容旧格式的评估标准
                 accuracy_criteria = row.get("Accuracy_Criteria") if row.get("Accuracy_Criteria") else None
                 completeness_criteria = row.get("Completeness_Criteria") if row.get("Completeness_Criteria") else None
                 compliance_criteria = row.get("Compliance_Criteria") if row.get("Compliance_Criteria") else None
@@ -189,11 +247,13 @@ class CaseLoader:
                     expected_result=row.get("Expected_Result") or row.get("expected_result"),
                     assert_rules=assert_rules,
                     eval_dimensions=eval_dimensions,
+                    dimension_criteria=dimension_criteria,
                     accuracy_criteria=accuracy_criteria,
                     completeness_criteria=completeness_criteria,
                     compliance_criteria=compliance_criteria,
                     tone_criteria=tone_criteria,
                     min_score_threshold=min_score_threshold,
+                    test_case_specific_metrics=test_case_specific_metrics,
                     metadata={"source_file": "xiaofang_fz_chat.csv"}
                 )
                 

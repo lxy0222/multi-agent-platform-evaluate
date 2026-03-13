@@ -3,7 +3,7 @@ import os
 import logging
 from src.utils.config_loader import ConfigLoader
 from src.client import AgentClientFactory
-from src.utils.evaluator import Evaluator
+from src.utils.medical_evaluator import create_evaluator
 from src.utils.logger_config import get_test_run_logger, log_test_summary
 
 # ========================================
@@ -128,8 +128,8 @@ def evaluator(config):
     
     session_logger.info(f"评估器配置: judge_model={judge_model}, dify_config={'已配置' if dify_config else '未配置'}")
 
-    # 始终返回实例，而不是 None
-    return Evaluator(judge_api_key=judge_key, model=judge_model, dify_config=dify_config)
+    # 使用医疗场景专用评估器
+    return create_evaluator(config=config)
 
 
 def pytest_sessionfinish(session, exitstatus):

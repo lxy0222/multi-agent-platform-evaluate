@@ -158,45 +158,45 @@ class TestUnifiedFramework:
         # 步骤4: LLM 智能评估
         # ==========================================
         with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
-             # 准备参数
-             context_inputs = case.dynamic_inputs
-             
-             # 准备维度评估标准
-             dimension_criteria = {}
-             if case.accuracy_criteria:
-                 dimension_criteria["accuracy_criteria"] = case.accuracy_criteria
-             if case.completeness_criteria:
-                 dimension_criteria["completeness_criteria"] = case.completeness_criteria
-             if case.compliance_criteria:
-                 dimension_criteria["compliance_criteria"] = case.compliance_criteria
-             if case.tone_criteria:
-                 dimension_criteria["tone_criteria"] = case.tone_criteria
-             
-             # 调用评估器
-             llm_result = evaluator.llm_evaluate(
-                 case_id = case.case_id,
-                 inputs=case.input_query,
-                 actual_output=ai_reply,
-                 scene=case.scene_description,
-                 expected_output=case.expected_result,
-                 context_inputs=context_inputs,
-                 eval_dimensions=case.eval_dimensions if case.eval_dimensions else None,
-                 dimension_criteria=dimension_criteria if dimension_criteria else None
-             )
+             # # 准备参数
+             # context_inputs = case.dynamic_inputs
+             #
+             # # 准备维度评估标准
+             # dimension_criteria = {}
+             # if case.accuracy_criteria:
+             #     dimension_criteria["accuracy_criteria"] = case.accuracy_criteria
+             # if case.completeness_criteria:
+             #     dimension_criteria["completeness_criteria"] = case.completeness_criteria
+             # if case.compliance_criteria:
+             #     dimension_criteria["compliance_criteria"] = case.compliance_criteria
+             # if case.tone_criteria:
+             #     dimension_criteria["tone_criteria"] = case.tone_criteria
+             #
+             # # 调用评估器
+             # llm_result = evaluator.llm_evaluate(
+             #     case_id = case.case_id,
+             #     inputs=case.input_query,
+             #     actual_output=ai_reply,
+             #     scene=case.scene_description,
+             #     expected_output=case.expected_result,
+             #     context_inputs=context_inputs,
+             #     eval_dimensions=case.eval_dimensions if case.eval_dimensions else None,
+             #     dimension_criteria=dimension_criteria if dimension_criteria else None
+             # )
              
              # 记录评估结果
-             case_logger.log_evaluation(llm_result)
+             case_logger.log_evaluation(result['llm_evaluation'])
              
              # 将评分结果写入报告
              allure.attach(
-                 json.dumps(llm_result, ensure_ascii=False, indent=4),
+                 json.dumps(result['llm_evaluation'], ensure_ascii=False, indent=4),
                  name="LLM 评估详细结果",
                  attachment_type=allure.attachment_type.JSON
              )
              
-             overall_score = llm_result.get("overall_score", 0)
-             overall_reason = llm_result.get("overall_reason", "无")
-             dimensions = llm_result.get("dimensions", {})
+             overall_score = result['llm_evaluation'].get("overall_score", 0)
+             overall_reason = result['llm_evaluation'].get("overall_reason", "无")
+             dimensions = result['llm_evaluation'].get("dimensions", {})
              
              # 在报告摘要中显示分数
              allure.dynamic.parameter("Overall Score", overall_score)
@@ -226,9 +226,9 @@ class TestUnifiedFramework:
             "validation_passed": result["success"],
             "overall_score": overall_score,
             "overall_reason": overall_reason,
-            "overall_pass": llm_result.get("pass", False),
+            "overall_pass": result['llm_evaluation'].get("pass", False),
             "dimensions": dimensions,  # 新增：各维度详细评分
-            "suggestions": llm_result.get("suggestions", []),  # 新增：改进建议
+            "suggestions": result['llm_evaluation'].get("suggestions", []),  # 新增：改进建议
             "metrics": result.get("metrics", {}),
             "duration_ms": result.get("metrics", {}).get("total_duration_ms", 0),
             "response_time_ms": result.get("metrics", {}).get("response_time_ms", 0),
