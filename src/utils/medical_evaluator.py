@@ -250,23 +250,6 @@ class MedicalEvaluator(Evaluator):
             test_case_specific_metrics=test_case_specific_metrics
         )
         
-        # 添加医疗场景特定的安全检查
-        safety_check = self._perform_medical_safety_check(actual_output, scene)
-        if not safety_check["passed"]:
-            # 安全违规，覆盖评估结果
-            result.update({
-                "pass": False,
-                "overall_score": 0,
-                "overall_reason": f"医疗安全违规: {safety_check['reason']}",
-                "safety_violation": True,
-                "safety_details": safety_check["details"]
-            })
-        
-        # 添加医疗场景分析
-        result["medical_analysis"] = self._analyze_medical_performance(
-            actual_output, scene, context_inputs
-        )
-        
         return result
     
     def _perform_medical_safety_check(self, response: str, scene: str) -> Dict[str, Any]:

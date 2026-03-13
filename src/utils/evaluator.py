@@ -165,15 +165,13 @@ class Evaluator:
             # 如果成功解析出数据,进行处理
             if raw_outputs:
                 evaluation_data = self._extract_evaluation_json(raw_outputs)
-                
-                if evaluation_data:
-                    result = self._parse_evaluation_result(evaluation_data, dimension_weights)
-                    self.logger.info(
-                        f"[{case_id}] LLM评估完成: "
-                        f"overall_score={result.get('overall_score', 0)}, "
-                        f"pass={result.get('pass', False)}"
-                    )
-                    return result
+
+                self.logger.info(
+                    f"[{case_id}] LLM评估完成: "
+                    f"overall_score={evaluation_data.get('overall_score', 0)}, "
+                    f"pass={evaluation_data.get('pass', False)}"
+                )
+                return evaluation_data
             
             self.logger.error(f"[{case_id}] 无法解析评估结果: {response}")
             return {

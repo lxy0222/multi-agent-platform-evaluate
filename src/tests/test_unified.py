@@ -158,59 +158,139 @@ class TestUnifiedFramework:
         # 步骤4: LLM 智能评估
         # ==========================================
         with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
-             # # 准备参数
-             # context_inputs = case.dynamic_inputs
-             #
-             # # 准备维度评估标准
-             # dimension_criteria = {}
-             # if case.accuracy_criteria:
-             #     dimension_criteria["accuracy_criteria"] = case.accuracy_criteria
-             # if case.completeness_criteria:
-             #     dimension_criteria["completeness_criteria"] = case.completeness_criteria
-             # if case.compliance_criteria:
-             #     dimension_criteria["compliance_criteria"] = case.compliance_criteria
-             # if case.tone_criteria:
-             #     dimension_criteria["tone_criteria"] = case.tone_criteria
-             #
-             # # 调用评估器
-             # llm_result = evaluator.llm_evaluate(
-             #     case_id = case.case_id,
-             #     inputs=case.input_query,
-             #     actual_output=ai_reply,
-             #     scene=case.scene_description,
-             #     expected_output=case.expected_result,
-             #     context_inputs=context_inputs,
-             #     eval_dimensions=case.eval_dimensions if case.eval_dimensions else None,
-             #     dimension_criteria=dimension_criteria if dimension_criteria else None
-             # )
-             
-             # 记录评估结果
-             case_logger.log_evaluation(result['llm_evaluation'])
-             
-             # 将评分结果写入报告
-             allure.attach(
-                 json.dumps(result['llm_evaluation'], ensure_ascii=False, indent=4),
-                 name="LLM 评估详细结果",
-                 attachment_type=allure.attachment_type.JSON
-             )
-             
-             overall_score = result['llm_evaluation'].get("overall_score", 0)
-             overall_reason = result['llm_evaluation'].get("overall_reason", "无")
-             dimensions = result['llm_evaluation'].get("dimensions", {})
-             
-             # 在报告摘要中显示分数
-             allure.dynamic.parameter("Overall Score", overall_score)
-             
-             # 显示各维度评分
-             for dim_name, dim_data in dimensions.items():
-                 if isinstance(dim_data, dict):
-                     allure.dynamic.parameter(f"{dim_name}_score", dim_data.get("score", 0))
-             
-             test_logger.info(f"[{case.case_id}] LLM评估完成: Overall Score={overall_score}, Reason={overall_reason}")
-             
-             # 检查是否达到阈值
-             if overall_score < case.min_score_threshold:
-                 test_logger.warning(f"[{case.case_id}] 评分低于阈值: {overall_score} < {case.min_score_threshold}")
+            # # 准备参数
+            # context_inputs = case.dynamic_inputs
+            #
+            # # 准备维度评估标准
+            # dimension_criteria = {}
+            # if case.accuracy_criteria:
+            #     dimension_criteria["accuracy_criteria"] = case.accuracy_criteria
+            # if case.completeness_criteria:
+            #     dimension_criteria["completeness_criteria"] = case.completeness_criteria
+            # if case.compliance_criteria:
+            #     dimension_criteria["compliance_criteria"] = case.compliance_criteria
+            # if case.tone_criteria:
+            #     dimension_criteria["tone_criteria"] = case.tone_criteria
+            #
+            # # 调用评估器
+            # llm_result = evaluator.llm_evaluate(
+            #     case_id = case.case_id,
+            #     inputs=case.input_query,
+            #     actual_output=ai_reply,
+            #     scene=case.scene_description,
+            #     expected_output=case.expected_result,
+            #     context_inputs=context_inputs,
+            #     eval_dimensions=case.eval_dimensions if case.eval_dimensions else None,
+            #     dimension_criteria=dimension_criteria if dimension_criteria else None
+            # )
+            
+            # 记录评估结果
+            case_logger.log_evaluation(result['llm_evaluation'])
+            
+            # 将评分结果写入报告 - 使用层级结构显示
+            eval_data = result['llm_evaluation']
+            
+            # 创建评估结果摘要
+            with allure.step("📊 评估结果摘要"):
+                # 处理overall_pass，可能是布尔值或字符串'pass'/'fail'
+                overall_pass = eval_data.get('overall_pass', False)
+                if isinstance(overall_pass, str):
+                    pass_status = overall_pass.lower() == 'pass'
+                else:
+                    pass_status = bool(overall_pass)
+                
+                allure.attach(
+                    f"总体评分: {eval_data.get('overall_score', 0)}/100\n"
+                    f"通过状态: {'✅ 通过' if pass_status else '❌ 未通过'}\n"
+                    f"评估理由: {eval_data.get('overall_reason', '无')}",
+                    name="摘要信息",
+                    attachment_type=allure.attachment_type.TEXT
+                )
+            
+            # 显示医疗分析部分（如果有）
+            medical_analysis = eval_data.get('medical_analysis', {})
+            if medical_analysis:
+                with allure.step("🏥 医疗分析"):
+                    med_analysis_text = ""
+                    for key, value in medical_analysis.items():
+                        status = "✅ 是" if value else "❌ 否"
+                        med_analysis_text += f"{key}: {status}\n"
+                    allure.attach(
+                        med_analysis_text,
+                        name="医疗分析详情",
+                        attachment_type=allure.attachment_type.TEXT
+                    )
+            
+            # 显示各维度评分 - 使用层级结构
+            dimensions = eval_data.get('dimensions', {})
+            if dimensions:
+                with allure.step("📈 维度评估详情"):
+                    # 为每个主要维度创建子步骤
+                    for dim_name, dim_data in dimensions.items():
+                        if isinstance(dim_data, dict):
+                            with allure.step(f"{dim_name}"):
+                                # 显示该维度的所有子维度
+                                for sub_dim_name, sub_dim_data in dim_data.items():
+                                    if isinstance(sub_dim_data, dict) and 'score' in sub_dim_data:
+                                        sub_dim_score = sub_dim_data.get('score', 0)
+                                        sub_dim_reason = sub_dim_data.get('reason', '')
+                                        sub_dim_details = sub_dim_data.get('details', '')
+                                        
+                                        with allure.step(f"{sub_dim_name}: {sub_dim_score}/10"):
+                                            # 构建子维度详情，直接显示三个值
+                                            sub_dim_content = f"score: {sub_dim_score}/10\n\n"
+                                            
+                                            if sub_dim_reason:
+                                                sub_dim_content += f"reason:\n{sub_dim_reason}\n\n"
+                                            
+                                            if sub_dim_details:
+                                                sub_dim_content += f"details:\n{sub_dim_details}"
+                                            
+                                            # 附加子维度信息
+                                            allure.attach(
+                                                sub_dim_content,
+                                                name="子维度详情",
+                                                attachment_type=allure.attachment_type.TEXT
+                                            )
+            
+            # 显示改进建议（如果有）
+            suggestions = eval_data.get('suggestions', [])
+            if suggestions:
+                with allure.step(f"💡 改进建议 ({len(suggestions)}条)"):
+                    suggestions_text = ""
+                    for i, suggestion in enumerate(suggestions, 1):
+                        suggestions_text += f"{i}. {suggestion}\n"
+                    
+                    allure.attach(
+                        suggestions_text,
+                        name="改进建议详情",
+                        attachment_type=allure.attachment_type.TEXT
+                    )
+            
+            # 仍然保留JSON格式用于详细分析
+            allure.attach(
+                json.dumps(eval_data, ensure_ascii=False, indent=4),
+                name="LLM 评估详细结果 (JSON)",
+                attachment_type=allure.attachment_type.JSON
+            )
+            
+            overall_score = result['llm_evaluation'].get("overall_score", 0)
+            overall_reason = result['llm_evaluation'].get("overall_reason", "无")
+            dimensions = result['llm_evaluation'].get("dimensions", {})
+            
+            # 在报告摘要中显示分数
+            allure.dynamic.parameter("Overall Score", overall_score)
+            
+            # 显示各维度评分
+            for dim_name, dim_data in dimensions.items():
+                if isinstance(dim_data, dict):
+                    allure.dynamic.parameter(f"{dim_name}_score", dim_data.get("score", 0))
+            
+            test_logger.info(f"[{case.case_id}] LLM评估完成: Overall Score={overall_score}, Reason={overall_reason}")
+            
+            # 检查是否达到阈值
+            if overall_score < case.min_score_threshold:
+                test_logger.warning(f"[{case.case_id}] 评分低于阈值: {overall_score} < {case.min_score_threshold}")
         
         # ==========================================
         # 步骤5: 收集结果到全局收集器
