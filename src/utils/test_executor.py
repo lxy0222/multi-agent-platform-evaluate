@@ -165,17 +165,62 @@ class TestExecutor:
     ) -> Dict[str, Any]:
         """执行Chat类型的请求"""
         try:
-            self.logger.debug(f"[{case.case_id}] 发送Chat消息")
+            # 记录详细的请求信息
+            self.logger.info(f"[{case.case_id}] 🚀 发送Chat请求")
+            self.logger.info(f"[{case.case_id}] 📋 请求概要:")
+            self.logger.info(f"[{case.case_id}]   - 目标平台: {case.target_agent}")
+            self.logger.info(f"[{case.case_id}]   - 用户ID: {params['user']}")
+            self.logger.info(f"[{case.case_id}]   - 会话ID: {params.get('conversation_id', '(新会话)')}")
+            
+            # 记录query内容
+            if params.get("query"):
+                query_str = str(params["query"])
+                if len(query_str) > 300:
+                    self.logger.info(f"[{case.case_id}]   - query: {query_str[:150]}...[{len(query_str)-150}字符已省略]")
+                else:
+                    self.logger.info(f"[{case.case_id}]   - query: {query_str}")
+            
+            # 记录inputs参数
+            if params.get("inputs"):
+                inputs_log = {}
+                for key, value in params["inputs"].items():
+                    if isinstance(value, str) and len(value) > 200:
+                        inputs_log[key] = f"{value[:100]}...[{len(value)-100}字符已省略]"
+                    elif key in ['api_key', 'secret', 'password', 'token', 'bearer_token']:
+                        inputs_log[key] = "[敏感信息已隐藏]"
+                    else:
+                        inputs_log[key] = value
+                self.logger.info(f"[{case.case_id}]   - inputs: {json.dumps(inputs_log, ensure_ascii=False)}")
+            
             response = client.send_message(
                 query=params["query"],
                 inputs=params["inputs"],
                 user=params["user"],
                 conversation_id=params.get("conversation_id", "")
             )
-            self.logger.debug(f"[{case.case_id}] Chat响应成功")
+            
+            # 记录响应信息
+            if response.get("status") == "success":
+                self.logger.info(f"[{case.case_id}] ✅ Chat请求成功")
+                self.logger.info(f"[{case.case_id}] 📊 响应概要:")
+                self.logger.info(f"[{case.case_id}]   - 状态: {response.get('status')}")
+                self.logger.info(f"[{case.case_id}]   - task_id: {response.get('task_id', 'N/A')}")
+                self.logger.info(f"[{case.case_id}]   - conversation_id: {response.get('conversation_id', 'N/A')}")
+                
+                # 记录answer内容
+                answer = response.get("answer", "")
+                if answer:
+                    if len(str(answer)) > 500:
+                        self.logger.info(f"[{case.case_id}]   - answer: {str(answer)[:200]}...[{len(str(answer))-200}字符已省略]")
+                    else:
+                        self.logger.info(f"[{case.case_id}]   - answer: {answer}")
+            else:
+                self.logger.warning(f"[{case.case_id}] ⚠️  Chat请求异常: {response.get('status', 'unknown')}")
+                self.logger.warning(f"[{case.case_id}]   - 错误信息: {response.get('answer', 'No error message')}")
+            
             return response
         except Exception as e:
-            self.logger.error(f"[{case.case_id}] Chat请求失败: {str(e)}", exc_info=True)
+            self.logger.error(f"[{case.case_id}] ❌ Chat请求失败: {str(e)}", exc_info=True)
             return {
                 "error": str(e),
                 "status": "failed"
@@ -189,16 +234,53 @@ class TestExecutor:
     ) -> Dict[str, Any]:
         """执行Workflow类型的请求"""
         try:
-            self.logger.debug(f"[{case.case_id}] 执行Workflow")
+            # 记录详细的Workflow请求信息
+            self.logger.info(f"[{case.case_id}] 🚀 发送Workflow请求")
+            self.logger.info(f"[{case.case_id}] 📋 请求概要:")
+            self.logger.info(f"[{case.case_id}]   - 目标平台: {case.target_agent}")
+            self.logger.info(f"[{case.case_id}]   - 用户ID: {params['user']}")
+            self.logger.info(f"[{case.case_id}]   - 请求类型: Workflow")
+            
+            # 记录inputs参数
+            if params.get("inputs"):
+                inputs_log = {}
+                for key, value in params["inputs"].items():
+                    if isinstance(value, str) and len(value) > 200:
+                        inputs_log[key] = f"{value[:100]}...[{len(value)-100}字符已省略]"
+                    elif key in ['api_key', 'secret', 'password', 'token', 'bearer_token']:
+                        inputs_log[key] = "[敏感信息已隐藏]"
+                    else:
+                        inputs_log[key] = value
+                self.logger.info(f"[{case.case_id}]   - inputs: {json.dumps(inputs_log, ensure_ascii=False)}")
+            
             # Workflow只需要inputs和user参数
             response = client.run_workflow(
                 inputs=params["inputs"],
                 user=params["user"]
             )
-            self.logger.debug(f"[{case.case_id}] Workflow响应成功")
+            
+            # 记录响应信息
+            if response.get("status") == "success":
+                self.logger.info(f"[{case.case_id}] ✅ Workflow请求成功")
+                self.logger.info(f"[{case.case_id}] 📊 响应概要:")
+                self.logger.info(f"[{case.case_id}]   - 状态: {response.get('status')}")
+                self.logger.info(f"[{case.case_id}]   - workflow_run_id: {response.get('workflow_run_id', 'N/A')}")
+                self.logger.info(f"[{case.case_id}]   - task_id: {response.get('task_id', 'N/A')}")
+                
+                # 记录answer内容
+                answer = response.get("answer", "")
+                if answer:
+                    if len(str(answer)) > 500:
+                        self.logger.info(f"[{case.case_id}]   - answer: {str(answer)[:200]}...[{len(str(answer))-200}字符已省略]")
+                    else:
+                        self.logger.info(f"[{case.case_id}]   - answer: {answer}")
+            else:
+                self.logger.warning(f"[{case.case_id}] ⚠️  Workflow请求异常: {response.get('status', 'unknown')}")
+                self.logger.warning(f"[{case.case_id}]   - 错误信息: {response.get('answer', 'No error message')}")
+            
             return response
         except Exception as e:
-            self.logger.error(f"[{case.case_id}] Workflow请求失败: {str(e)}", exc_info=True)
+            self.logger.error(f"[{case.case_id}] ❌ Workflow请求失败: {str(e)}", exc_info=True)
             return {
                 "error": str(e),
                 "status": "failed"

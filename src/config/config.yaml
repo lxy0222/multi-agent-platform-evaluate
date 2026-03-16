@@ -132,7 +132,7 @@ test_data:
   
   # 过滤条件（可选）
   filter:
-#     case_ids: ["CASE_PS_01",]  # 只执行指定用例
+     case_ids: ["CASE_01",]  # 只执行指定用例
     # target_agents: ["follow_up"]      # 只执行指定智能体
     # tags: ["Reply"]                   # 包含指定标签
     # enabled: true                     # 只执行启用的用例

@@ -24,7 +24,7 @@ class BaseAgentClient(ABC):
         pass
 
     @abstractmethod
-    def run_workflow(self, inputs, user):
+    def run_workflow(self, inputs, user) -> dict:
         """
         统一的工作流执行接口
         """

@@ -37,3 +37,39 @@ Case_03,follow_up,CHAT_1,主动关怀患者回复后话术测试,"[{""content"":
   ""requestChannel"": ""企微"",
   ""sys.files"": []
 }",Reply,
+Case_04,follow_up,CHAT_1,患者反馈中药太苦，产生抗拒，回复必须先输出安抚情绪的话术，并给出缓解苦味的小妙招,这中药实在是太苦了，喝得我直犯恶心，实在喝不下去了,"{
+  ""patientId"": 200004,
+  ""externalUserId"": ""test_sop_004"",
+  ""messages"": ""[{\""role\"":\""assistant\"",\""content\"":[{\""type\"":\""text\"",\""text\"":\""这两天服药感觉怎么样？\""}],\""time\"":\""2026-03-10 09:00:00\""}]"",
+  ""doctorMessages"": ""[]"",
+  ""weComName"": ""测试患者_太苦"",
+  ""requestChannel"": ""企微"",
+  ""sys.files"": [],
+  ""sys.user_id"": ""200004"",
+  ""sys.query"": ""[{\""content\"":\""这中药实在是太苦了，喝得我直犯恶心，实在喝不下去了\"",\""msgId\"":\""msg_s04\"",\""msgType\"":\""text\""}]"",
+  ""sys.dialogue_count"": 2
+}",Reply,,
+Case_05,follow_up,CHAT_1,"患者想看一个“大家中医”目前不支持的专病（如：脱发、痔疮）,根据 SOP，安抚后，必须强行下发 颈椎腰椎病 的卡片，并附加规范话术说明“名称不用纠结，医生都能看”",小方，我最近脱发特别严重，你们这儿的专家能看脱发吗？,"{
+  ""patientId"": 200006,
+  ""externalUserId"": ""test_sop_006"",
+  ""messages"": ""[]"",
+  ""doctorMessages"": ""[]"",
+  ""weComName"": ""测试患者_跨病"",
+  ""requestChannel"": ""企微"",
+  ""sys.files"": [],
+  ""sys.user_id"": ""200006"",
+  ""sys.query"": ""[{\""content\"":\""小方，我最近脱发特别严重，你们这儿的专家能看脱发吗？\"",\""msgId\"":\""msg_s06\"",\""msgType\"":\""text\""}]"",
+  ""sys.dialogue_count"": 1
+}",Reply,,
+Case_06,follow_up,CHAT_1,"患者推荐朋友来看病，且附带了手机号,只要命中“转介绍 + 手机号”，立即截断大模型回复，needHuman 置为 true，交由人工客服跟进",我觉得你们专家看得很准，我有个朋友也想开点药，他手机号是13812345678，你加他一下,"{
+  ""patientId"": 200007,
+  ""externalUserId"": ""test_sop_007"",
+  ""messages"": ""[{\""role\"":\""assistant\"",\""content\"":[{\""type\"":\""text\"",\""text\"":\""很高兴看到您恢复得这么好！\""}],\""time\"":\""2026-03-10 09:00:00\""}]"",
+  ""doctorMessages"": ""[]"",
+  ""weComName"": ""测试患者_转介"",
+  ""requestChannel"": ""企微"",
+  ""sys.files"": [],
+  ""sys.user_id"": ""200007"",
+  ""sys.query"": ""[{\""content\"":\""我觉得你们专家看得很准，我有个朋友也想开点药，他手机号是13812345678，你加他一下\"",\""msgId\"":\""msg_s07\"",\""msgType\"":\""text\""}]"",
+  ""sys.dialogue_count"": 2
+}",Reply,转人工,
