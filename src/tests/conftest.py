@@ -158,7 +158,7 @@ def pytest_sessionfinish(session, exitstatus):
 
     # 如果设置了环境变量，保存为baseline
     if os.environ.get("SAVE_BASELINE"):
-        version_name = os.environ.get("BASELINE_VERSION", baseline_conf.get("default_baseline", "baseline"))
+        version_name = os.environ.get("BASELINE_VERSION") or baseline_conf.get("default_baseline", "baseline")
         
         if test_results_collector:
             manager = BaselineManager()
@@ -275,13 +275,18 @@ def pytest_sessionfinish(session, exitstatus):
                     metadata=current_metadata
                 )
                 
-                # 生成对比报告
+                # 生成增强版对比报告
                 if comparison.get("success", True):
+                    from src.utils.comparison_reporter import ComparisonReporter
+                    
+                    # 创建增强版报告生成器
+                    reporter = ComparisonReporter(comparison)
                     report_path = f"reports/comparison_{baseline_version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                    manager.generate_comparison_report(comparison, report_path)
+                    reporter.generate_markdown_report(report_path)
+                    
                     if session_logger:
-                        session_logger.info(f"对比报告已生成: {report_path}")
-                    print(f"\n[*] 对比报告已生成: {report_path}")
+                        session_logger.info(f"增强版对比报告已生成: {report_path}")
+                    print(f"\n[*] 增强版对比报告已生成: {report_path}")
     
     # 结束日志
     if session_logger:

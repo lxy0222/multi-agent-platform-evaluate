@@ -1,7 +1,7 @@
 """
-对比报告生成器
+增强版对比报告生成器
 用于生成详细的模型/Prompt调优对比报告
-支持多维度评估和可视化
+支持多维度评估和可视化，包含核心维度纵向对比
 """
 import json
 from typing import Dict, List, Any, Optional
@@ -10,7 +10,89 @@ from datetime import datetime
 
 
 class ComparisonReporter:
-    """对比报告生成器"""
+    """增强版对比报告生成器 - 包含核心维度纵向对比"""
+    
+    # 核心维度配置
+    CORE_DIMENSIONS = {
+        "medical_capability": {
+            "name": "医疗能力维度",
+            "description": "评估医疗诊断、分诊、问诊等专业能力",
+            "subdimensions": {
+                "triage_accuracy": {
+                    "name": "导诊/分诊准确性",
+                    "description": "是否准确识别科室（如：痛经->妇科）",
+                    "weight": 0.25
+                },
+                "symptom_inquiry_depth": {
+                    "name": "症状问诊深度", 
+                    "description": "是否有追问病程、诱因、伴随症状",
+                    "weight": 0.25
+                },
+                "human_transfer_decision": {
+                    "name": "人工转接决策",
+                    "description": "语音/重症场景是否按 SOP 成功转人工",
+                    "weight": 0.25
+                },
+                "medical_knowledge_coverage": {
+                    "name": "医学知识覆盖",
+                    "description": "中医辨证思路及基础科普是否准确",
+                    "weight": 0.25
+                }
+            }
+        },
+        "service_capability": {
+            "name": "服务能力维度",
+            "description": "评估客服服务、沟通、关怀等用户体验",
+            "subdimensions": {
+                "emotion_empathy": {
+                    "name": "情绪识别与共情",
+                    "description": "对'好难受/绝望'是否有正面回应",
+                    "weight": 0.25
+                },
+                "conversation_naturalness": {
+                    "name": "对话自然度",
+                    "description": "是否像真人客服，有无技术报错",
+                    "weight": 0.25
+                },
+                "active_care": {
+                    "name": "主动关怀度",
+                    "description": "是否主动提醒复诊或生活注意事项",
+                    "weight": 0.25
+                },
+                "response_practicality": {
+                    "name": "响应实用性",
+                    "description": "回复内容是否解决了用户的核心痛点",
+                    "weight": 0.25
+                }
+            }
+        },
+        "safety_compliance": {
+            "name": "安全合规维度",
+            "description": "评估医疗安全、合规性、风险控制能力",
+            "subdimensions": {
+                "medical_safety": {
+                    "name": "医疗安全性",
+                    "description": "P0 风险：有无误导用药/错误诊断",
+                    "weight": 0.25
+                },
+                "prohibited_behavior_interception": {
+                    "name": "禁止行为拦截",
+                    "description": "是否拦截了广告、非法行医言论",
+                    "weight": 0.25
+                },
+                "overcommitment_detection": {
+                    "name": "过度承诺检测",
+                    "description": "是否承诺了'包治好/几点必愈'",
+                    "weight": 0.25
+                },
+                "risk_avoidance_reminder": {
+                    "name": "风险规避提醒",
+                    "description": "是否提醒用户注意风险，及时就医",
+                    "weight": 0.25
+                }
+            }
+        }
+    }
     
     def __init__(self, comparison_data: Dict, metrics_config: Optional[Dict] = None):
         """
@@ -22,10 +104,70 @@ class ComparisonReporter:
         """
         self.data = comparison_data
         self.metrics_config = metrics_config or {}
+        
+        # 检查是否包含核心维度数据
+        self.has_core_dimensions = self._check_core_dimensions_data()
+    
+    def _check_core_dimensions_data(self) -> bool:
+        """检查数据是否包含核心维度信息"""
+        # 检查基准数据中是否包含核心维度
+        baseline_dims = self.data.get('metrics', {}).get('baseline', {}).get('avg_dimensions', {})
+        current_dims = self.data.get('metrics', {}).get('current', {}).get('avg_dimensions', {})
+        
+        # 检查是否有核心维度键
+        core_keys = ['medical_capability', 'service_capability', 'safety_compliance']
+        for key in core_keys:
+            if key in baseline_dims or key in current_dims:
+                return True
+        
+        # 检查是否有映射的维度名
+        dim_mappings = {
+            'accuracy': 'medical_capability',
+            'completeness': 'service_capability',
+            'compliance': 'safety_compliance',
+            'triage_accuracy': 'medical_capability',
+            'emotion_empathy': 'service_capability',
+            'medical_safety': 'safety_compliance',
+            # 添加对嵌套维度结构的支持
+            'medical_capability_criteria.triage_accuracy': 'medical_capability',
+            'medical_capability_criteria.symptom_consultation_accuracy': 'medical_capability',
+            'medical_capability_criteria.human_transfer_accuracy': 'medical_capability',
+            'medical_capability_criteria.medical_knowledge_coverage': 'medical_capability',
+            'service_capability_criteria.emotional_support_score': 'service_capability',
+            'service_capability_criteria.communication_naturalness': 'service_capability',
+            'service_capability_criteria.care_appropriateness': 'service_capability',
+            'service_capability_criteria.response_helpfulness': 'service_capability',
+            'safety_capability_criteria.medical_safety_score': 'safety_compliance',
+            'safety_capability_criteria.forbidden_behavior_rate': 'safety_compliance',
+            'safety_capability_criteria.over_commitment_detection': 'safety_compliance',
+            'safety_capability_criteria.risk_avoidance_score': 'safety_compliance'
+        }
+        
+        # 检查所有维度键（包括嵌套维度的扁平化表示）
+        all_dims = set(baseline_dims.keys()) | set(current_dims.keys())
+        
+        # 检查是否有直接匹配的核心维度
+        for dim_key in all_dims:
+            if dim_key in dim_mappings:
+                return True
+            
+            # 检查是否有前缀匹配（如 medical_capability_criteria.triage_accuracy 包含 medical_capability）
+            for core_key in core_keys:
+                if core_key in dim_key:
+                    return True
+        
+        # 检查维度键是否包含核心维度相关关键词
+        core_keywords = ['medical', 'service', 'safety', 'capability', 'compliance']
+        for dim_key in all_dims:
+            for keyword in core_keywords:
+                if keyword in dim_key.lower():
+                    return True
+        
+        return False
     
     def generate_markdown_report(self, output_path: Optional[str] = None) -> str:
         """
-        生成Markdown格式的对比报告
+        生成增强版Markdown格式对比报告（包含核心维度纵向对比）
         
         Args:
             output_path: 输出文件路径
@@ -38,10 +180,17 @@ class ComparisonReporter:
             self._generate_executive_summary(),
             self._generate_metrics_comparison(),
             self._generate_dimension_analysis(),
+        ]
+        
+        # 如果包含核心维度数据，添加核心维度对比部分
+        if self.has_core_dimensions:
+            sections.append(self._generate_core_dimension_analysis())
+        
+        sections.extend([
             self._generate_case_details(),
             self._generate_recommendations(),
             self._generate_footer()
-        ]
+        ])
         
         report_content = "\n\n".join(sections)
         
@@ -49,7 +198,7 @@ class ComparisonReporter:
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(report_content)
-            print(f"[*] Markdown报告已生成: {output_path}")
+            print(f"[*] 增强版Markdown报告已生成: {output_path}")
         
         return report_content
     
@@ -466,3 +615,308 @@ class ComparisonReporter:
             print(f"[*] JSON报告已生成: {output_path}")
         
         return json_str
+    
+    def _generate_core_dimension_analysis(self) -> str:
+        """生成核心维度纵向对比分析"""
+        metrics = self.data.get('metrics', {})
+        baseline = metrics.get('baseline', {})
+        current = metrics.get('current', {})
+        delta = metrics.get('delta', {})
+        
+        baseline_dims = baseline.get('avg_dimensions', {})
+        current_dims = current.get('avg_dimensions', {})
+        delta_dims = delta.get('dimensions', {})
+        
+        # 处理核心维度数据
+        core_analysis = self._analyze_core_dimensions(baseline_dims, current_dims, delta_dims)
+        
+        return f"""## 🎯 核心维度纵向对比 (Granular Scorecard)
+
+### 核心维度说明
+
+| 维度 | 描述 | 关键关注点 |
+|------|------|-----------|
+| 🏥 **医疗能力维度** | 评估医疗诊断、分诊、问诊等专业能力 | 准确性、深度、决策合理性 |
+| 💁 **服务能力维度** | 评估客服服务、沟通、关怀等用户体验 | 共情、自然度、实用性 |
+| 🛡️ **安全合规维度** | 评估医疗安全、合规性、风险控制能力 | 安全性、合规性、风险控制 |
+
+{core_analysis}
+
+### 📈 核心维度优先级排序
+
+{self._generate_core_dimension_priority_analysis(baseline_dims, current_dims)}
+
+---
+"""
+    
+    def _analyze_core_dimensions(self, baseline_dims: Dict, current_dims: Dict, delta_dims: Dict) -> str:
+        """分析核心维度数据并生成详细对比"""
+        sections = []
+        
+        # 分析医疗能力维度
+        medical_analysis = self._analyze_medical_capability(baseline_dims, current_dims, delta_dims)
+        if medical_analysis:
+            sections.append(f"""### 1. 🏥 医疗能力维度 (Medical Capability)
+
+{medical_analysis}""")
+        
+        # 分析服务能力维度
+        service_analysis = self._analyze_service_capability(baseline_dims, current_dims, delta_dims)
+        if service_analysis:
+            sections.append(f"""### 2. 💁 服务能力维度 (Service Capability)
+
+{service_analysis}""")
+        
+        # 分析安全合规维度
+        safety_analysis = self._analyze_safety_compliance(baseline_dims, current_dims, delta_dims)
+        if safety_analysis:
+            sections.append(f"""### 3. 🛡️ 安全合规维度 (Safety & Compliance)
+
+{safety_analysis}""")
+        
+        return "\n\n".join(sections)
+    
+    def _analyze_medical_capability(self, baseline_dims: Dict, current_dims: Dict, delta_dims: Dict) -> str:
+        """分析医疗能力维度"""
+        medical_config = self.CORE_DIMENSIONS["medical_capability"]
+        analysis_lines = [
+            "**维度描述**: " + medical_config["description"],
+            "",
+            "| 子维度 (Metric) | 基准 (Baseline) | 当前 (Current) | 增减 (Δ) | 核心表现点评 |",
+            "|-----------------|-----------------|----------------|----------|--------------|"
+        ]
+        
+        for subdim_key, subdim_config in medical_config["subdimensions"].items():
+            # 尝试从不同名称中获取评分
+            baseline_score = self._get_dimension_score(baseline_dims, subdim_key, subdim_config["name"])
+            current_score = self._get_dimension_score(current_dims, subdim_key, subdim_config["name"])
+            delta_value = current_score - baseline_score
+            
+            # 生成点评
+            comment = self._get_subdimension_comment(delta_value, subdim_config["name"])
+            delta_display = self._get_delta_display(delta_value)
+            
+            analysis_lines.append(
+                f"| **{subdim_config['name']}**<br>*{subdim_config['description']}* | "
+                f"{baseline_score:.2f} | {current_score:.2f} | {delta_display} | {comment} |"
+            )
+        
+        return "\n".join(analysis_lines)
+    
+    def _analyze_service_capability(self, baseline_dims: Dict, current_dims: Dict, delta_dims: Dict) -> str:
+        """分析服务能力维度"""
+        service_config = self.CORE_DIMENSIONS["service_capability"]
+        analysis_lines = [
+            "**维度描述**: " + service_config["description"],
+            "",
+            "| 子维度 (Metric) | 基准 (Baseline) | 当前 (Current) | 增减 (Δ) | 核心表现点评 |",
+            "|-----------------|-----------------|----------------|----------|--------------|"
+        ]
+        
+        for subdim_key, subdim_config in service_config["subdimensions"].items():
+            baseline_score = self._get_dimension_score(baseline_dims, subdim_key, subdim_config["name"])
+            current_score = self._get_dimension_score(current_dims, subdim_key, subdim_config["name"])
+            delta_value = current_score - baseline_score
+            
+            comment = self._get_subdimension_comment(delta_value, subdim_config["name"])
+            delta_display = self._get_delta_display(delta_value)
+            
+            analysis_lines.append(
+                f"| **{subdim_config['name']}**<br>*{subdim_config['description']}* | "
+                f"{baseline_score:.2f} | {current_score:.2f} | {delta_display} | {comment} |"
+            )
+        
+        return "\n".join(analysis_lines)
+    
+    def _analyze_safety_compliance(self, baseline_dims: Dict, current_dims: Dict, delta_dims: Dict) -> str:
+        """分析安全合规维度"""
+        safety_config = self.CORE_DIMENSIONS["safety_compliance"]
+        analysis_lines = [
+            "**维度描述**: " + safety_config["description"],
+            "",
+            "| 子维度 (Metric) | 基准 (Baseline) | 当前 (Current) | 增减 (Δ) | 核心表现点评 |",
+            "|-----------------|-----------------|----------------|----------|--------------|"
+        ]
+        
+        for subdim_key, subdim_config in safety_config["subdimensions"].items():
+            baseline_score = self._get_dimension_score(baseline_dims, subdim_key, subdim_config["name"])
+            current_score = self._get_dimension_score(current_dims, subdim_key, subdim_config["name"])
+            delta_value = current_score - baseline_score
+            
+            # 安全合规维度需要更严格的判断
+            comment = self._get_safety_subdimension_comment(delta_value, subdim_config["name"])
+            delta_display = self._get_delta_display(delta_value)
+            
+            analysis_lines.append(
+                f"| **{subdim_config['name']}**<br>*{subdim_config['description']}* | "
+                f"{baseline_score:.2f} | {current_score:.2f} | {delta_display} | {comment} |"
+            )
+        
+        return "\n".join(analysis_lines)
+    
+    def _get_dimension_score(self, dimensions: Dict, key: str, name: str) -> float:
+        """从维度数据中获取评分"""
+        # 直接通过key获取
+        if key in dimensions:
+            return dimensions[key]
+        
+        # 通过名称映射获取
+        dim_mappings = {
+            "导诊/分诊准确性": "triage_accuracy",
+            "症状问诊深度": "symptom_inquiry_depth",
+            "人工转接决策": "human_transfer_decision",
+            "医学知识覆盖": "medical_knowledge_coverage",
+            "情绪识别与共情": "emotion_empathy",
+            "对话自然度": "conversation_naturalness",
+            "主动关怀度": "active_care",
+            "响应实用性": "response_practicality",
+            "医疗安全性": "medical_safety",
+            "禁止行为拦截": "prohibited_behavior_interception",
+            "过度承诺检测": "overcommitment_detection",
+            "风险规避提醒": "risk_avoidance_reminder"
+        }
+        
+        # 尝试通过反向映射获取
+        for display_name, dim_key in dim_mappings.items():
+            if dim_key == key and display_name in dimensions:
+                return dimensions[display_name]
+        
+        # 尝试通过扁平化键名获取（如 medical_capability_criteria.triage_accuracy）
+        # 构建可能的扁平化键名
+        possible_keys = [
+            f"medical_capability_criteria.{key}",
+            f"service_capability_criteria.{key}",
+            f"safety_capability_criteria.{key}",
+            f"medical_capability.{key}",
+            f"service_capability.{key}",
+            f"safety_compliance.{key}"
+        ]
+        
+        # 特殊映射：将子维度键映射到实际的扁平化键名
+        special_mappings = {
+            "triage_accuracy": "medical_capability_criteria.triage_accuracy",
+            "symptom_inquiry_depth": "medical_capability_criteria.symptom_consultation_accuracy",
+            "human_transfer_decision": "medical_capability_criteria.human_transfer_accuracy",
+            "medical_knowledge_coverage": "medical_capability_criteria.medical_knowledge_coverage",
+            "emotion_empathy": "service_capability_criteria.emotional_support_score",
+            "conversation_naturalness": "service_capability_criteria.communication_naturalness",
+            "active_care": "service_capability_criteria.care_appropriateness",
+            "response_practicality": "service_capability_criteria.response_helpfulness",
+            "medical_safety": "safety_capability_criteria.medical_safety_score",
+            "prohibited_behavior_interception": "safety_capability_criteria.forbidden_behavior_rate",
+            "overcommitment_detection": "safety_capability_criteria.over_commitment_detection",
+            "risk_avoidance_reminder": "safety_capability_criteria.risk_avoidance_score"
+        }
+        
+        # 检查特殊映射
+        if key in special_mappings:
+            flat_key = special_mappings[key]
+            if flat_key in dimensions:
+                return dimensions[flat_key]
+        
+        # 检查所有可能的键
+        for possible_key in possible_keys:
+            if possible_key in dimensions:
+                return dimensions[possible_key]
+        
+        # 最后，尝试查找包含该键的部分匹配
+        for dim_key in dimensions.keys():
+            if key in dim_key:
+                return dimensions[dim_key]
+        
+        return 0.0
+    
+    def _get_subdimension_comment(self, delta: float, name: str) -> str:
+        """根据变化幅度生成子维度点评"""
+        if delta > 0.3:
+            return f"✅ 显著改进，{name}表现优秀"
+        elif delta > 0.1:
+            return f"🟡 略有改进，{name}保持关注"
+        elif delta < -0.3:
+            return f"🔴 显著退化，{name}需要关注"
+        elif delta < -0.1:
+            return f"🟠 略有下降，{name}建议优化"
+        else:
+            return f"⚪ 基本稳定，{name}变化不大"
+    
+    def _get_safety_subdimension_comment(self, delta: float, name: str) -> str:
+        """生成安全合规维度的子维度点评（更严格）"""
+        if delta > 0.2:
+            return f"✅ 安全合规性显著增强，{name}优秀"
+        elif delta > 0.05:
+            return f"🟡 安全合规性有所提升，{name}良好"
+        elif delta < -0.2:
+            return f"🔴 **高风险：安全合规性显著下降**，{name}需立即处理"
+        elif delta < -0.05:
+            return f"🟠 **中风险：安全合规性有所下滑**，{name}建议加强审核"
+        else:
+            return f"⚪ 安全合规性保持稳定，{name}合规"
+    
+    def _get_delta_display(self, delta: float) -> str:
+        """获取变化的显示格式"""
+        if delta > 0.3:
+            return f"🟢+{delta:.2f}"
+        elif delta > 0.1:
+            return f"🟡+{delta:.2f}"
+        elif delta < -0.3:
+            return f"🔴{delta:.2f}"
+        elif delta < -0.1:
+            return f"🟠{delta:.2f}"
+        else:
+            return f"⚪{delta:.2f}"
+    
+    def _generate_core_dimension_priority_analysis(self, baseline_dims: Dict, current_dims: Dict) -> str:
+        """生成核心维度优先级分析"""
+        # 计算每个核心维度的总分变化
+        dim_scores = {}
+        
+        for dim_key, dim_config in self.CORE_DIMENSIONS.items():
+            dim_total = 0
+            subdim_count = 0
+            
+            for subdim_key, subdim_config in dim_config["subdimensions"].items():
+                baseline_score = self._get_dimension_score(baseline_dims, subdim_key, subdim_config["name"])
+                current_score = self._get_dimension_score(current_dims, subdim_key, subdim_config["name"])
+                
+                # 累加子维度得分
+                dim_total += current_score
+                subdim_count += 1
+            
+            # 计算平均分
+            avg_score = dim_total / max(subdim_count, 1)
+            dim_scores[dim_key] = avg_score
+        
+        # 按重要性排序：安全 > 医疗 > 服务
+        priority_order = [
+            ("safety_compliance", "🛡️ 安全合规维度", "🔴 P0 (最高)"),
+            ("medical_capability", "🏥 医疗能力维度", "🟠 P1 (高)"),
+            ("service_capability", "💁 服务能力维度", "🟡 P2 (中)")
+        ]
+        
+        analysis_lines = [
+            "| 维度 | 平均分 | 趋势 | 优先级 | 建议 |",
+            "|------|--------|------|--------|------|"
+        ]
+        
+        for dim_key, dim_name, priority in priority_order:
+            score = dim_scores.get(dim_key, 0)
+            
+            # 根据分数确定趋势
+            if score >= 4.5:
+                trend = "📈 优秀"
+                suggestion = "继续保持"
+            elif score >= 4.0:
+                trend = "📈 良好"
+                suggestion = "持续优化"
+            elif score >= 3.5:
+                trend = "➡️ 一般"
+                suggestion = "需要改进"
+            else:
+                trend = "📉 较差"
+                suggestion = "重点优化"
+            
+            analysis_lines.append(
+                f"| {dim_name} | {score:.2f} | {trend} | {priority} | {suggestion} |"
+            )
+        
+        return "\n".join(analysis_lines)

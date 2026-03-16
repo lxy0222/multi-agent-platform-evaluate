@@ -212,12 +212,12 @@ class BaselineManager:
                 "delta": {}
             }
         
-        baseline_score = baseline_case.get("llm_score", 0)
-        current_score = current_case.get("llm_score", 0)
-        baseline_passed = baseline_case.get("validation_passed", False)
-        current_passed = current_case.get("validation_passed", False)
-        baseline_duration = baseline_case.get("duration_ms", 0)
-        current_duration = current_case.get("duration_ms", 0)
+        baseline_score = baseline_case.get("llm_score", 0) if baseline_case else 0
+        current_score = current_case.get("llm_score", 0) if current_case else 0
+        baseline_passed = baseline_case.get("validation_passed", False) if baseline_case else False
+        current_passed = current_case.get("validation_passed", False) if current_case else False
+        baseline_duration = baseline_case.get("duration_ms", 0) if baseline_case else 0
+        current_duration = current_case.get("duration_ms", 0) if current_case else 0
         
         delta = {
             "score": current_score - baseline_score,
@@ -245,13 +245,13 @@ class BaselineManager:
                 "score": baseline_score,
                 "passed": baseline_passed,
                 "duration_ms": baseline_duration,
-                "reason": baseline_case.get("llm_reason", "")
+                "reason": baseline_case.get("llm_reason", "") if baseline_case else ""
             },
             "current": {
                 "score": current_score,
                 "passed": current_passed,
                 "duration_ms": current_duration,
-                "reason": current_case.get("llm_reason", "")
+                "reason": current_case.get("llm_reason", "") if current_case else ""
             },
             "delta": delta
         }
@@ -276,37 +276,89 @@ class BaselineManager:
         
         # 计算各维度的平均分
         avg_dimensions = {}
-        dimension_names = set()
+        
+        # 收集所有维度和子维度
+        all_dimensions = {}
         for r in results.values():
             dims = r.get("dimensions", {})
             if isinstance(dims, dict):
-                dimension_names.update(dims.keys())
+                for dim_key, dim_value in dims.items():
+                    if isinstance(dim_value, dict):
+                        # 处理嵌套维度结构（如 medical_capability_criteria）
+                        for sub_key, sub_value in dim_value.items():
+                            if isinstance(sub_value, dict) and "score" in sub_value:
+                                full_key = f"{dim_key}.{sub_key}"
+                                all_dimensions.setdefault(full_key, []).append(sub_value["score"])
+                            elif isinstance(sub_value, (int, float)):
+                                full_key = f"{dim_key}.{sub_key}"
+                                all_dimensions.setdefault(full_key, []).append(sub_value)
+                    elif isinstance(dim_value, dict) and "score" in dim_value:
+                        # 处理扁平维度结构
+                        all_dimensions.setdefault(dim_key, []).append(dim_value["score"])
+                    elif isinstance(dim_value, (int, float)):
+                        # 直接数值
+                        all_dimensions.setdefault(dim_key, []).append(dim_value)
         
-        for dim_name in dimension_names:
-            dim_scores = []
-            for r in results.values():
-                dims = r.get("dimensions", {})
-                if isinstance(dims, dict) and dim_name in dims:
-                    dim_data = dims[dim_name]
-                    if isinstance(dim_data, dict):
-                        dim_scores.append(dim_data.get("score", 0))
-                    elif isinstance(dim_data, (int, float)):
-                        dim_scores.append(dim_data)
-            
-            if dim_scores:
-                avg_dimensions[dim_name] = round(sum(dim_scores) / len(dim_scores), 2)
+        # 计算每个维度的平均分
+        for dim_name, scores_list in all_dimensions.items():
+            if scores_list:
+                avg_dimensions[dim_name] = round(sum(scores_list) / len(scores_list), 2)
+        
+        # 同时计算核心维度的平均分（从嵌套结构中提取）
+        self._calculate_core_dimension_scores(results, avg_dimensions)
+        
+        avg_overall_score = sum(scores) / len(scores) if scores else 0.0
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
         
         return {
             "total_cases": total,
             "passed_cases": passed,
             "failed_cases": total - passed,
             "pass_rate": (passed / total * 100) if total > 0 else 0.0,
-            "avg_overall_score": sum(scores) / len(scores) if scores else 0.0,
-            "avg_duration_ms": sum(durations) / len(durations) if durations else 0.0,
+            "avg_overall_score": avg_overall_score,
+            "avg_duration_ms": avg_duration,
             "min_score": min(scores) if scores else 0.0,
             "max_score": max(scores) if scores else 0.0,
             "avg_dimensions": avg_dimensions  # 新增：各维度平均分
         }
+    
+    def _calculate_core_dimension_scores(self, results: Dict[str, Dict], avg_dimensions: Dict[str, float]) -> None:
+        """计算核心维度（医疗、服务、安全）的平均分"""
+        core_dimension_mapping = {
+            # 医疗能力维度
+            "medical_capability_criteria.triage_accuracy": "medical_capability",
+            "medical_capability_criteria.symptom_consultation_accuracy": "medical_capability",
+            "medical_capability_criteria.human_transfer_accuracy": "medical_capability",
+            "medical_capability_criteria.medical_knowledge_coverage": "medical_capability",
+            
+            # 服务能力维度
+            "service_capability_criteria.emotional_support_score": "service_capability",
+            "service_capability_criteria.communication_naturalness": "service_capability",
+            "service_capability_criteria.care_appropriateness": "service_capability",
+            "service_capability_criteria.response_helpfulness": "service_capability",
+            
+            # 安全合规维度
+            "safety_capability_criteria.medical_safety_score": "safety_compliance",
+            "safety_capability_criteria.forbidden_behavior_rate": "safety_compliance",
+            "safety_capability_criteria.over_commitment_detection": "safety_compliance",
+            "safety_capability_criteria.risk_avoidance_score": "safety_compliance",
+            
+            # 映射标准维度名称
+            "accuracy": "medical_capability",
+            "completeness": "service_capability",
+            "compliance": "safety_compliance",
+            "tone": "service_capability"
+        }
+        
+        # 计算每个核心维度的总分
+        core_scores = {}
+        for full_dim, core_dim in core_dimension_mapping.items():
+            if full_dim in avg_dimensions:
+                core_scores.setdefault(core_dim, []).append(avg_dimensions[full_dim])
+        
+        # 计算每个核心维度的平均分
+        for core_dim, scores in core_scores.items():
+            avg_dimensions[core_dim] = round(sum(scores) / len(scores), 2)
     
     def _calculate_delta(self, baseline_summary: Dict, current_summary: Dict) -> Dict:
         """计算两个摘要之间的差值"""
