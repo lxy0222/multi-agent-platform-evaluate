@@ -72,7 +72,9 @@ class Evaluator:
         eval_dimensions=None,
         dimension_criteria=None,
         dimension_weights=None,
-        test_case_specific_metrics=None
+        test_case_specific_metrics=None,
+        human_transfer_data=None,
+        grading_criteria=None
     ):
         """
         使用 Dify Agent 进行多维度评估
@@ -117,8 +119,27 @@ class Evaluator:
             "scene": scene,
             "expected_result": expected_output or "",
             "context_inputs": json.dumps(context_inputs or {}, ensure_ascii=False),
-            "eval_dimensions": json.dumps(eval_dimensions or ["accuracy", "completeness", "compliance", "tone"], ensure_ascii=False)
+            "eval_dimensions": json.dumps(eval_dimensions or [], ensure_ascii=False)
         }
+        
+        # 注入转人工参数：合并为单个 JSON 字符串字段，Dify 只需一个输入变量
+        if human_transfer_data:
+            human_transfer_info = {
+                "needHuman": human_transfer_data.get("needHuman"),
+                "humanReason": human_transfer_data.get("humanReason") or "",
+                "messageList": human_transfer_data.get("messageList") or []
+            }
+            agent_inputs["human_transfer_info"] = json.dumps(human_transfer_info, ensure_ascii=False)
+            self.logger.info(
+                f"[{case_id}] 注入转人工参数(human_transfer_info): "
+                f"needHuman={human_transfer_info['needHuman']}, "
+                f"humanReason={human_transfer_info['humanReason']}"
+            )
+
+        # 注入评分等级标准（如果有）
+        if grading_criteria:
+            agent_inputs["grading_criteria"] = grading_criteria
+            self.logger.debug(f"[{case_id}] 注入评分等级标准")
         
         # 添加各维度的评估标准（支持新格式）
         if dimension_criteria:

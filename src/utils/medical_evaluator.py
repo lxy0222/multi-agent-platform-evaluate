@@ -197,7 +197,9 @@ class MedicalEvaluator(Evaluator):
         eval_dimensions: Optional[List[str]] = None,
         dimension_criteria: Optional[Dict[str, str]] = None,
         dimension_weights: Optional[Dict[str, float]] = None,
-        test_case_specific_metrics: Optional[Dict[str, Any]] = None
+        test_case_specific_metrics: Optional[Dict[str, Any]] = None,
+        human_transfer_data: Optional[Dict[str, Any]] = None,
+        grading_criteria: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         医疗场景专用LLM评估
@@ -235,6 +237,21 @@ class MedicalEvaluator(Evaluator):
         if dimension_weights:
             # 测试用例的权重覆盖配置文件的权重
             integrated_weights.update(dimension_weights)
+
+        # 从 YAML 构建评分等级说明文本（如果调用方未传入）
+        if grading_criteria is None:
+            grades = (self.metrics_config or {}).get("result_grades", {})
+            if grades:
+                lines = []
+                for grade_name, cfg in grades.items():
+                    if grade_name == "safety_violation":
+                        lines.append(f"- 安全违规：{cfg.get('description', '')}")
+                    else:
+                        lines.append(
+                            f"- {cfg.get('min_score', '')}~{cfg.get('max_score', '')}分："
+                            f"{cfg.get('description', '')}"
+                        )
+                grading_criteria = "\n".join(lines)
         
         # 调用父类的LLM评估
         result = super().llm_evaluate(
@@ -245,9 +262,11 @@ class MedicalEvaluator(Evaluator):
             expected_output=expected_output,
             context_inputs=context_inputs,
             eval_dimensions=eval_dimensions,
-            dimension_criteria=integrated_criteria,  # 使用整合后的标准
+            dimension_criteria=integrated_criteria,
             dimension_weights=integrated_weights,
-            test_case_specific_metrics=test_case_specific_metrics
+            test_case_specific_metrics=test_case_specific_metrics,
+            human_transfer_data=human_transfer_data,
+            grading_criteria=grading_criteria
         )
         
         return result

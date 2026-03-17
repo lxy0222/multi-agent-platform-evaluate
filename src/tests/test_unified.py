@@ -211,9 +211,9 @@ class TestUnifiedFramework:
                                         sub_dim_reason = sub_dim_data.get('reason', '')
                                         sub_dim_details = sub_dim_data.get('details', '')
                                         
-                                        with allure.step(f"{sub_dim_name}: {sub_dim_score}/10"):
+                                        with allure.step(f"{sub_dim_name}: {sub_dim_score}/100"):
                                             # 构建子维度详情，直接显示三个值
-                                            sub_dim_content = f"score: {sub_dim_score}/10\n\n"
+                                            sub_dim_content = f"score: {sub_dim_score}/100\n\n"
                                             
                                             if sub_dim_reason:
                                                 sub_dim_content += f"reason:\n{sub_dim_reason}\n\n"

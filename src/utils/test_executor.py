@@ -478,6 +478,25 @@ class TestExecutor:
         # 获取测试用例的增强评估输入
         eval_inputs = case.get_enhanced_evaluation_inputs()
         
+        # 提取转人工相关参数（如果存在）
+        human_transfer_data = None
+        json_data = response.get("json_data")
+        if isinstance(json_data, dict):
+            need_human = json_data.get("needHuman")
+            human_reason = json_data.get("humanReason")
+            message_list = json_data.get("messageList")
+            # 只要有任意一个字段存在，就构造 human_transfer_data
+            if need_human is not None or human_reason is not None or message_list is not None:
+                human_transfer_data = {
+                    "needHuman": need_human,
+                    "humanReason": human_reason,
+                    "messageList": message_list or []
+                }
+                self.logger.info(
+                    f"[{case.case_id}] 检测到转人工参数: needHuman={need_human}, "
+                    f"humanReason={human_reason}"
+                )
+
         # 准备评估参数
         eval_params = {
             "case_id": case.case_id,
@@ -487,7 +506,8 @@ class TestExecutor:
             "expected_output": case.expected_result,
             "context_inputs": case.dynamic_inputs,
             "eval_dimensions": eval_inputs.get("eval_dimensions", []),
-            "dimension_criteria": eval_inputs.get("dimension_criteria", {})
+            "dimension_criteria": eval_inputs.get("dimension_criteria", {}),
+            "human_transfer_data": human_transfer_data
         }
         
         # 如果有测试用例特定的评估指标，添加到评估参数中
