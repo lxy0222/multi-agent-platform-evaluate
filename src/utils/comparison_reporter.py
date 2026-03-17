@@ -4,6 +4,7 @@
 支持多维度评估和可视化，包含核心维度纵向对比
 """
 import json
+import os
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 from datetime import datetime
@@ -204,6 +205,8 @@ class ComparisonReporter:
     
     def _generate_header(self) -> str:
         """生成报告头部"""
+        current_version = os.environ.get("BASELINE_VERSION", "N/A (未通过参数指定)")
+        
         return f"""# 🔬 模型/Prompt 调优效果对比报告
 
 **报告生成时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -214,9 +217,8 @@ class ComparisonReporter:
 
 | 项目 | Baseline版本 | 当前版本 |
 |------|-------------|---------|
-| **版本名称** | {self.data.get('baseline_version', 'N/A')} | Current Run |
+| **测试模型/版本** | {self.data.get('baseline_version', 'N/A')} | {current_version} |
 | **测试时间** | {self.data.get('baseline_timestamp', 'N/A')} | {self.data.get('current_timestamp', 'N/A')} |
-| **模型配置** | {self.data.get('baseline_metadata', {}).get('model', 'N/A')} | {self.data.get('current_metadata', {}).get('model', 'N/A')} |
 | **测试用例数** | {self.data.get('metrics', {}).get('baseline', {}).get('total_cases', 0)} | {self.data.get('metrics', {}).get('current', {}).get('total_cases', 0)} |
 
 ---"""
@@ -280,7 +282,12 @@ class ComparisonReporter:
         duration_change = delta.get('avg_duration_ms', 0)
         if abs(duration_change) >= 500:
             direction = "加快" if duration_change < 0 else "变慢"
-            findings.append(f"- ⚡ **响应速度{direction}**: {duration_change:+.0f}ms (变化率: {delta.get('avg_duration_ms_percent', 0):+.1f}%)")
+            findings.append(f"- ⚡ **系统耗时{direction}**: {duration_change:+.0f}ms (变化率: {delta.get('avg_duration_ms_percent', 0):+.1f}%)")
+            
+        response_time_change = delta.get('avg_response_time_ms', 0)
+        if abs(response_time_change) >= 200:
+            direction = "加快" if response_time_change < 0 else "变慢"
+            findings.append(f"- 🚀 **Agent响应{direction}**: {response_time_change:+.0f}ms (变化率: {delta.get('avg_response_time_ms_percent', 0):+.1f}%)")
         
         if not findings:
             findings.append("- ℹ️ 各项指标变化在正常范围内，无显著变化")
@@ -309,7 +316,8 @@ class ComparisonReporter:
 
 | 指标 | Baseline | 当前版本 | 变化量 | 变化率 | 趋势 |
 |------|----------|----------|--------|--------|------|
-| **平均响应时间** | {baseline.get('avg_duration_ms', 0):.0f}ms | {current.get('avg_duration_ms', 0):.0f}ms | {delta.get('avg_duration_ms', 0):+.0f}ms | {delta.get('avg_duration_ms_percent', 0):+.2f}% | {self._get_trend_arrow(-delta.get('avg_duration_ms', 0))} |
+| **平均平台总耗时** | {baseline.get('avg_duration_ms', 0):.0f}ms | {current.get('avg_duration_ms', 0):.0f}ms | {delta.get('avg_duration_ms', 0):+.0f}ms | {delta.get('avg_duration_ms_percent', 0):+.2f}% | {self._get_trend_arrow(-delta.get('avg_duration_ms', 0))} |
+| **平均Agent响应时间** | {baseline.get('avg_response_time_ms', 0):.0f}ms | {current.get('avg_response_time_ms', 0):.0f}ms | {delta.get('avg_response_time_ms', 0):+.0f}ms | {delta.get('avg_response_time_ms_percent', 0):+.2f}% | {self._get_trend_arrow(-delta.get('avg_response_time_ms', 0))} |
 
 > 💡 **说明**: 
 > - ⬆️ 表示改进 | ⬇️ 表示退化 | ➡️ 表示持平
@@ -477,8 +485,8 @@ class ComparisonReporter:
             cases = sorted(cases, key=sort_key, reverse=reverse)
         
         lines = [f"### {title} ({len(cases)}个)\n"]
-        lines.append("| 用例ID | Baseline评分 | 当前评分 | 评分变化 | 通过状态 | 响应时间变化 |")
-        lines.append("|--------|--------------|----------|----------|----------|--------------|")
+        lines.append("| 用例ID | Baseline评分 | 当前评分 | 评分变化 | 通过状态 | Agent响应(ms) |")
+        lines.append("|--------|--------------|----------|----------|----------|---------------|")
         
         for case in cases:
             baseline_info = case.get('baseline', {})
@@ -495,6 +503,7 @@ class ComparisonReporter:
             pass_status = f"{baseline_pass} → {current_pass}"
             
             duration_delta = delta_info.get('duration', 0)
+            response_time_delta = delta_info.get('response_time', 0)
             
             lines.append(
                 f"| {case_id} | "
@@ -502,7 +511,7 @@ class ComparisonReporter:
                 f"{current_score:.1f} | "
                 f"{score_delta:+.1f} ({delta_info.get('score_percent', 0):+.1f}%) | "
                 f"{pass_status} | "
-                f"{duration_delta:+.0f}ms |"
+                f"{response_time_delta:+.0f}ms |"
             )
         
         # 添加详细原因(可选,前3个)
@@ -537,14 +546,14 @@ class ComparisonReporter:
                 )
         
         # 基于性能变化的建议
-        duration_change_percent = delta.get('avg_duration_ms_percent', 0)
-        if duration_change_percent > 20:
+        response_time_change_percent = delta.get('avg_response_time_ms_percent', 0)
+        if response_time_change_percent > 20:
             recommendations.append(
-                "🐌 响应时间显著增加，建议检查模型配置和网络延迟"
+                "🐌 Agent响应时间显著增加，建议检查模型是否负载过高，或者流式输出是否有阻塞"
             )
-        elif duration_change_percent < -20:
+        elif response_time_change_percent < -20:
             recommendations.append(
-                "⚡ 响应速度显著提升，这是一个积极的改进"
+                "⚡ Agent响应速度显著提升，这是一个积极的体验改进"
             )
         
         # 基于评分变化的建议

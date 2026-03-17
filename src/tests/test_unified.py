@@ -282,6 +282,9 @@ class TestUnifiedFramework:
             # 在报告摘要中显示分数和各维度通过状态
             allure.dynamic.parameter("LLM评估结论", "✅ 通过" if pass_status else "❌ 未通过")
             allure.dynamic.parameter("Overall Score", overall_score)
+            
+            response_time_ms = result.get("metrics", {}).get("response_time_ms", 0)
+            allure.dynamic.parameter("Agent响应时间(ms)", response_time_ms)
             for dim_name, dim_data in dimensions.items():
                 if isinstance(dim_data, dict):
                     score = dim_data.get("score", 0)

@@ -218,12 +218,16 @@ class BaselineManager:
         current_passed = current_case.get("validation_passed", False) if current_case else False
         baseline_duration = baseline_case.get("duration_ms", 0) if baseline_case else 0
         current_duration = current_case.get("duration_ms", 0) if current_case else 0
+        baseline_response_time = baseline_case.get("response_time_ms", 0) if baseline_case else 0
+        current_response_time = current_case.get("response_time_ms", 0) if current_case else 0
         
         delta = {
             "score": current_score - baseline_score,
             "score_percent": ((current_score - baseline_score) / max(baseline_score, 1)) * 100,
             "duration": current_duration - baseline_duration,
             "duration_percent": ((current_duration - baseline_duration) / max(baseline_duration, 1)) * 100,
+            "response_time": current_response_time - baseline_response_time,
+            "response_time_percent": ((current_response_time - baseline_response_time) / max(baseline_response_time, 1)) * 100,
             "validation_changed": baseline_passed != current_passed
         }
         
@@ -245,12 +249,14 @@ class BaselineManager:
                 "score": baseline_score,
                 "passed": baseline_passed,
                 "duration_ms": baseline_duration,
+                "response_time_ms": baseline_response_time,
                 "reason": baseline_case.get("llm_reason", "") if baseline_case else ""
             },
             "current": {
                 "score": current_score,
                 "passed": current_passed,
                 "duration_ms": current_duration,
+                "response_time_ms": current_response_time,
                 "reason": current_case.get("llm_reason", "") if current_case else ""
             },
             "delta": delta
@@ -266,6 +272,7 @@ class BaselineManager:
                 "pass_rate": 0.0,
                 "avg_overall_score": 0.0,
                 "avg_duration_ms": 0.0,
+                "avg_response_time_ms": 0.0,
                 "avg_dimensions": {}
             }
         
@@ -273,6 +280,7 @@ class BaselineManager:
         passed = sum(1 for r in results.values() if r.get("validation_passed", False))
         scores = [r.get("overall_score", 0) for r in results.values() if "overall_score" in r]
         durations = [r.get("duration_ms", 0) for r in results.values() if "duration_ms" in r]
+        response_times = [r.get("response_time_ms", 0) for r in results.values() if "response_time_ms" in r]
         
         # 计算各维度的平均分
         avg_dimensions = {}
@@ -309,6 +317,7 @@ class BaselineManager:
         
         avg_overall_score = sum(scores) / len(scores) if scores else 0.0
         avg_duration = sum(durations) / len(durations) if durations else 0.0
+        avg_response_time = sum(response_times) / len(response_times) if response_times else 0.0
         
         return {
             "total_cases": total,
@@ -317,6 +326,7 @@ class BaselineManager:
             "pass_rate": (passed / total * 100) if total > 0 else 0.0,
             "avg_overall_score": avg_overall_score,
             "avg_duration_ms": avg_duration,
+            "avg_response_time_ms": avg_response_time,
             "min_score": min(scores) if scores else 0.0,
             "max_score": max(scores) if scores else 0.0,
             "avg_dimensions": avg_dimensions  # 新增：各维度平均分
@@ -364,8 +374,8 @@ class BaselineManager:
         """计算两个摘要之间的差值"""
         delta = {}
         
-        # 计算通过率、总分、响应时间的变化
-        for key in ["pass_rate", "avg_overall_score", "avg_duration_ms"]:
+        # 计算通过率、总分、响应时间等变化
+        for key in ["pass_rate", "avg_overall_score", "avg_duration_ms", "avg_response_time_ms"]:
             baseline_val = baseline_summary.get(key, 0)
             current_val = current_summary.get(key, 0)
             delta[key] = current_val - baseline_val
@@ -433,10 +443,16 @@ class BaselineManager:
             f"{delta.get('avg_score_percent', 0):+.2f}% |"
         )
         report_lines.append(
-            f"| 平均响应时间(ms) | {baseline.get('avg_duration_ms', 0):.0f} | "
+            f"| 平均系统总耗时(ms) | {baseline.get('avg_duration_ms', 0):.0f} | "
             f"{current.get('avg_duration_ms', 0):.0f} | "
             f"{delta.get('avg_duration_ms', 0):+.0f} | "
             f"{delta.get('avg_duration_ms_percent', 0):+.2f}% |"
+        )
+        report_lines.append(
+            f"| 平均Agent响应时间(ms) | {baseline.get('avg_response_time_ms', 0):.0f} | "
+            f"{current.get('avg_response_time_ms', 0):.0f} | "
+            f"{delta.get('avg_response_time_ms', 0):+.0f} | "
+            f"{delta.get('avg_response_time_ms_percent', 0):+.2f}% |"
         )
         
         report_lines.extend(["", "## 详细用例对比", ""])
@@ -453,8 +469,8 @@ class BaselineManager:
             report_lines.extend([
                 f"### {emoji} {title} ({len(cases)}个)",
                 "",
-                "| 用例ID | Baseline评分 | 当前评分 | 评分变化 | 响应时间变化(ms) |",
-                "|--------|--------------|----------|----------|------------------|"
+                "| 用例ID | Baseline评分 | 当前评分 | 评分变化 | Agent响应变化(ms) | 系统总耗时变化 |",
+                "|--------|--------------|----------|----------|-------------------|----------------|"
             ])
             
             for case in sorted(cases, key=lambda x: x.get("delta", {}).get("score", 0), reverse=True):
@@ -467,6 +483,7 @@ class BaselineManager:
                     f"{b_info.get('score', 0):.1f} | "
                     f"{c_info.get('score', 0):.1f} | "
                     f"{d_info.get('score', 0):+.1f} ({d_info.get('score_percent', 0):+.1f}%) | "
+                    f"{d_info.get('response_time', 0):+.0f} | "
                     f"{d_info.get('duration', 0):+.0f} |"
                 )
             report_lines.append(  "")

@@ -68,7 +68,7 @@ judge:
   enabled: true
   provider: "dify"
   api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxx" # 保留旧的 key 兼容
-  model: "doubao-seed"
+  model: "ChatGPT5.1"
   # Dify 评估智能体配置
   dify_config:
     platform: "dify"
@@ -86,7 +86,7 @@ report:
 # Baseline 配置（支持按智能体区分）
 baseline:
   # 是否启用按智能体保存/对比 baseline
-  per_agent: true
+  per_agent: false
   # 默认 baseline 名称前缀
   default: "baseline"
   # 按智能体指定 baseline 名称（可选）
