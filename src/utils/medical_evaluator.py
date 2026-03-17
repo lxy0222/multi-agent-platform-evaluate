@@ -268,9 +268,91 @@ class MedicalEvaluator(Evaluator):
             human_transfer_data=human_transfer_data,
             grading_criteria=grading_criteria
         )
-        
+
+        # 根据 YAML threshold 对各维度评分做通过/不通过判断
+        dim_thresholds = self._build_dimension_thresholds()
+        dimensions = result.get("dimensions", {})
+        failed_dims = []
+
+        for dim_name, dim_data in dimensions.items():
+            if not isinstance(dim_data, dict):
+                continue
+            score = dim_data.get("score", 0)
+            threshold = dim_thresholds.get(dim_name)
+            if threshold is not None:
+                passed = score >= threshold
+                dim_data["threshold"] = threshold
+                dim_data["pass"] = passed
+                if not passed:
+                    failed_dims.append(dim_name)
+                    self.medical_logger.info(
+                        f"[{case_id}] 维度不达标: {dim_name} 得分={score}, 阈值={threshold}"
+                    )
+
+        # 任意维度不达标则整体不通过
+        if failed_dims:
+            result["pass"] = False
+            result["failed_dimensions"] = failed_dims
+            self.medical_logger.warning(
+                f"[{case_id}] 以下维度未达阈值: {failed_dims}"
+            )
+
+        # 向子维度（metric 层）注入阈值和 pass 字段
+        metric_thresholds = self._build_metric_thresholds()
+        for dim_data in dimensions.values():
+            if not isinstance(dim_data, dict):
+                continue
+            for sub_name, sub_data in dim_data.items():
+                if isinstance(sub_data, dict) and "score" in sub_data:
+                    thresh = metric_thresholds.get(sub_name)
+                    if thresh is not None:
+                        sub_data["threshold"] = thresh
+                        sub_data["pass"] = sub_data["score"] >= thresh
+
         return result
+
     
+    def _build_metric_thresholds(self) -> Dict[str, float]:
+        """
+        从 YAML 构建 metric 名 → 阈值的平铺字典，供子维度层判断使用。
+        invert=True 的指标越小越好，跨过不纳入正向阈值。
+        """
+        thresholds = {}
+        if not self.metrics_config or "dimensions" not in self.metrics_config:
+            return thresholds
+
+        for dim_config in self.metrics_config["dimensions"].values():
+            for metric in dim_config.get("metrics", []):
+                name = metric.get("name")
+                t = metric.get("threshold")
+                if name and t is not None and not metric.get("invert", False):
+                    thresholds[name] = float(t)
+
+        return thresholds
+
+    def _build_dimension_thresholds(self) -> Dict[str, float]:
+        """
+        从 YAML 构建每个维度的及格阈值。
+        取该维度下所有 metric 的 threshold 最小值作为维度整体阈值
+        （invert=True 的指标越小越好，跳过不参与阈值计算）。
+        """
+        thresholds = {}
+        if not self.metrics_config or "dimensions" not in self.metrics_config:
+            return thresholds
+
+        for dim_name, dim_config in self.metrics_config["dimensions"].items():
+            metric_thresholds = []
+            for metric in dim_config.get("metrics", []):
+                t = metric.get("threshold")
+                # invert=True 表示越小越好（如超时率），不纳入正向阈值
+                if t is not None and not metric.get("invert", False):
+                    metric_thresholds.append(float(t))
+            if metric_thresholds:
+                # 取最低阈值：只要最严的指标过了，其余大概率也过了
+                thresholds[dim_name] = min(metric_thresholds)
+
+        return thresholds
+
     def _perform_medical_safety_check(self, response: str, scene: str) -> Dict[str, Any]:
         """执行医疗安全检查"""
         safety_result = {

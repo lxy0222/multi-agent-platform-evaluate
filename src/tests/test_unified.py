@@ -167,20 +167,24 @@ class TestUnifiedFramework:
             
             # 创建评估结果摘要
             with allure.step("📊 评估结果摘要"):
-                # 处理overall_pass，可能是布尔值或字符串'pass'/'fail'
-                overall_pass = eval_data.get('overall_pass', False)
-                if isinstance(overall_pass, str):
-                    pass_status = overall_pass.lower() == 'pass'
-                else:
-                    pass_status = bool(overall_pass)
-                
-                allure.attach(
+                # 医疗评估器写入的是 'pass' key，兼容旧的 'overall_pass'
+                pass_status = bool(eval_data.get('pass', eval_data.get('overall_pass', False)))
+
+                summary = (
                     f"总体评分: {eval_data.get('overall_score', 0)}/100\n"
                     f"通过状态: {'✅ 通过' if pass_status else '❌ 未通过'}\n"
-                    f"评估理由: {eval_data.get('overall_reason', '无')}",
+                    f"评估理由: {eval_data.get('overall_reason', '无')}"
+                )
+                failed_dims = eval_data.get('failed_dimensions', [])
+                if failed_dims:
+                    summary += f"\n未达阈值维度: {', '.join(failed_dims)}"
+
+                allure.attach(
+                    summary,
                     name="摘要信息",
                     attachment_type=allure.attachment_type.TEXT
                 )
+
             
             # 显示医疗分析部分（如果有）
             medical_analysis = eval_data.get('medical_analysis', {})
@@ -200,33 +204,55 @@ class TestUnifiedFramework:
             dimensions = eval_data.get('dimensions', {})
             if dimensions:
                 with allure.step("📈 维度评估详情"):
-                    # 为每个主要维度创建子步骤
                     for dim_name, dim_data in dimensions.items():
-                        if isinstance(dim_data, dict):
-                            with allure.step(f"{dim_name}"):
-                                # 显示该维度的所有子维度
-                                for sub_dim_name, sub_dim_data in dim_data.items():
-                                    if isinstance(sub_dim_data, dict) and 'score' in sub_dim_data:
-                                        sub_dim_score = sub_dim_data.get('score', 0)
-                                        sub_dim_reason = sub_dim_data.get('reason', '')
-                                        sub_dim_details = sub_dim_data.get('details', '')
-                                        
-                                        with allure.step(f"{sub_dim_name}: {sub_dim_score}/100"):
-                                            # 构建子维度详情，直接显示三个值
-                                            sub_dim_content = f"score: {sub_dim_score}/100\n\n"
-                                            
-                                            if sub_dim_reason:
-                                                sub_dim_content += f"reason:\n{sub_dim_reason}\n\n"
-                                            
-                                            if sub_dim_details:
-                                                sub_dim_content += f"details:\n{sub_dim_details}"
-                                            
-                                            # 附加子维度信息
-                                            allure.attach(
-                                                sub_dim_content,
-                                                name="子维度详情",
-                                                attachment_type=allure.attachment_type.TEXT
-                                            )
+                        if not isinstance(dim_data, dict):
+                            continue
+                        dim_score = dim_data.get('score', 0)
+                        dim_threshold = dim_data.get('threshold')
+                        dim_pass = dim_data.get('pass')
+
+                        # 维度标题：带通过/未通过标记和阈值
+                        if dim_pass is not None:
+                            icon = '✅' if dim_pass else '❌'
+                            threshold_hint = f" (阈值 {dim_threshold})" if dim_threshold else ""
+                            step_title = f"{icon} {dim_name}: {dim_score}{threshold_hint}"
+                        else:
+                            step_title = f"{dim_name}: {dim_score}"
+
+                        with allure.step(step_title):
+                            for sub_dim_name, sub_dim_data in dim_data.items():
+                                if isinstance(sub_dim_data, dict) and 'score' in sub_dim_data:
+                                    sub_score = sub_dim_data.get('score', 0)
+                                    sub_thresh = sub_dim_data.get('threshold')
+                                    sub_pass = sub_dim_data.get('pass')
+                                    sub_reason = sub_dim_data.get('reason', '')
+                                    sub_details = sub_dim_data.get('details', '')
+
+                                    # 子维度步骤标题：加入通过状态和阈值
+                                    if sub_pass is not None:
+                                        sub_icon = '✅' if sub_pass else '❌'
+                                        sub_thresh_hint = f" (阈值{sub_thresh})" if sub_thresh else ""
+                                        sub_title = f"{sub_icon} {sub_dim_name}: {sub_score}/100{sub_thresh_hint}"
+                                    else:
+                                        sub_title = f"{sub_dim_name}: {sub_score}/100"
+
+                                    with allure.step(sub_title):
+                                        content = f"score: {sub_score}/100"
+                                        if sub_thresh is not None:
+                                            content += f"  |  阈值: {sub_thresh}"
+                                            content += f"  |  {'✅ 通过' if sub_pass else '❌ 未通过'}"
+                                        content += "\n\n"
+                                        if sub_reason:
+                                            content += f"reason:\n{sub_reason}\n\n"
+                                        if sub_details:
+                                            content += f"details:\n{sub_details}"
+                                        allure.attach(
+                                            content,
+                                            name="子维度详情",
+                                            attachment_type=allure.attachment_type.TEXT
+                                        )
+
+
             
             # 显示改进建议（如果有）
             suggestions = eval_data.get('suggestions', [])
@@ -253,13 +279,17 @@ class TestUnifiedFramework:
             overall_reason = result['llm_evaluation'].get("overall_reason", "无")
             dimensions = result['llm_evaluation'].get("dimensions", {})
             
-            # 在报告摘要中显示分数
+            # 在报告摘要中显示分数和各维度通过状态
+            allure.dynamic.parameter("LLM评估结论", "✅ 通过" if pass_status else "❌ 未通过")
             allure.dynamic.parameter("Overall Score", overall_score)
-            
-            # 显示各维度评分
             for dim_name, dim_data in dimensions.items():
                 if isinstance(dim_data, dict):
-                    allure.dynamic.parameter(f"{dim_name}_score", dim_data.get("score", 0))
+                    score = dim_data.get("score", 0)
+                    passed = dim_data.get("pass")
+                    icon = ('✅' if passed else '❌') if passed is not None else ''
+                    allure.dynamic.parameter(f"{dim_name}_score", f"{score}{icon}")
+
+
             
             test_logger.info(f"[{case.case_id}] LLM评估完成: Overall Score={overall_score}, Reason={overall_reason}")
             
