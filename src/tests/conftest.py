@@ -132,10 +132,65 @@ def evaluator(config):
     return create_evaluator(config=config)
 
 
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """
+    在终端输出总结时，从所有worker汇总数据，并真正执行 baseline 合并和汇报
+    """
+    import os
+    import glob
+    import json
+    
+    # 获取 worker 独立信息（如果没有配置xdist，那就是单个master自己跑）
+    worker_id = getattr(config, "workerinput", {}).get("workerid", "master")
+    if worker_id != "master":
+        return
+        
+    # 主进程先把自己内存里的结果塞进去 (防单线程)
+    final_collector = dict(test_results_collector)
+    
+    # 扫荡临时搜集目录，合并子进程的数据
+    try:
+        cache_dir = getattr(config, "cache", None)
+        if cache_dir:
+            cache_path = os.path.join(str(cache_dir.makedir("baseline_worker_data")), "*.json")
+            for fn in glob.glob(cache_path):
+                with open(fn, 'r', encoding='utf-8') as f:
+                    final_collector.update(json.load(f))
+    except Exception as e:
+        print(f"Xdist 数据汇总异常: {e}")
+                
+    test_results_collector.clear()
+    test_results_collector.update(final_collector)
+    
+    _execute_baseline_and_report_logic()
+
+
 def pytest_sessionfinish(session, exitstatus):
     """
     测试会话结束时的钩子函数
-    用于保存测试结果到baseline
+    如果是 Xdist 子进程，它会把打完所有用例暂存为 json 文件交由 Master 汇总。
+    """
+    import json
+    worker_id = getattr(session.config, "workerinput", {}).get("workerid", "master")
+
+    # 如果是多进程模式，存成碎片。在上面的 terminal_summary 回收。
+    if worker_id != "master":
+        if test_results_collector:
+            try:
+                cache_path = getattr(session.config, "cache", None)
+                if cache_path:
+                    dump_dir = cache_path.makedir("baseline_worker_data")
+                    dump_file = str(dump_dir / f"worker_{worker_id}.json")
+                    with open(dump_file, 'w', encoding='utf-8') as f:
+                        json.dump(test_results_collector, f, ensure_ascii=False)
+            except Exception as e:
+                print(f"写入子进程测试用例时出错 {e}")
+        return
+
+
+def _execute_baseline_and_report_logic():
+    """
+    真正的全量数据保存和报告生成（只在所有用例合并后的总控台上触发）
     """
     from src.utils.baseline_manager import BaselineManager
     import json
