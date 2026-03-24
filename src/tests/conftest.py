@@ -135,6 +135,7 @@ def evaluator(config):
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """
     在终端输出总结时，从所有worker汇总数据，并真正执行 baseline 合并和汇报
+    同时支持因 --count 多次重复运行参数带来的列表结果数值平均化
     """
     import os
     import glob
@@ -145,8 +146,20 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if worker_id != "master":
         return
         
+    final_collector = {}
+    
+    def _add_to_final(data_dict):
+        """将分散的列表结果统一合并到一个字典里的列表之中"""
+        for case_id, val in data_dict.items():
+            if case_id not in final_collector:
+                final_collector[case_id] = []
+            if isinstance(val, list):
+                final_collector[case_id].extend(val)
+            else:
+                final_collector[case_id].append(val)
+
     # 主进程先把自己内存里的结果塞进去 (防单线程)
-    final_collector = dict(test_results_collector)
+    _add_to_final(test_results_collector)
     
     # 扫荡临时搜集目录，合并子进程的数据
     try:
@@ -155,13 +168,53 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             cache_path = os.path.join(str(cache_dir.makedir("baseline_worker_data")), "*.json")
             for fn in glob.glob(cache_path):
                 with open(fn, 'r', encoding='utf-8') as f:
-                    final_collector.update(json.load(f))
+                    _add_to_final(json.load(f))
     except Exception as e:
         print(f"Xdist 数据汇总异常: {e}")
                 
+    # ==========================
+    # 多次执行结果平均化处理
+    # ==========================
     test_results_collector.clear()
-    test_results_collector.update(final_collector)
-    
+    for case_id, results_list in final_collector.items():
+        if not results_list: continue
+        
+        # 将多次运行取平均值，或者直接取第一次结果作为兜底
+        if len(results_list) > 1:
+            avg_result = results_list[-1].copy() # 复制最后一个结果作为底版
+            
+            # 平均数值型指标
+            list_len = len(results_list)
+            avg_result["overall_score"] = round(sum(r.get("overall_score", 0) for r in results_list) / list_len, 2)
+            avg_result["duration_ms"] = round(sum(r.get("duration_ms", 0) for r in results_list) / list_len, 2)
+            avg_result["response_time_ms"] = round(sum(r.get("response_time_ms", 0) for r in results_list) / list_len, 2)
+            
+            # 同步均化 metrics
+            avg_result["metrics"] = results_list[-1].get("metrics", {}).copy()
+            avg_result["metrics"]["total_duration_ms"] = avg_result["duration_ms"]
+            avg_result["metrics"]["response_time_ms"] = avg_result["response_time_ms"]
+            
+            # 平均 dimensions 的细分通过/失败（因为 dict 深层嵌套）
+            avg_dimensions = results_list[-1].get("dimensions", {}).copy()
+            for dim_name in avg_dimensions:
+                if isinstance(avg_dimensions[dim_name], dict) and "score" in avg_dimensions[dim_name]:
+                    scores = []
+                    for r in results_list:
+                        dim_data = r.get("dimensions", {}).get(dim_name)
+                        if isinstance(dim_data, dict) and "score" in dim_data:
+                            scores.append(dim_data["score"])
+                    if scores:
+                        avg_dimensions[dim_name]["score"] = round(sum(scores) / len(scores), 2)
+            avg_result["dimensions"] = avg_dimensions
+            
+            # Boolean 判断策略：所有记录均 pass 才算过
+            avg_result["validation_passed"] = all(r.get("validation_passed", False) for r in results_list)
+            avg_result["overall_pass"] = all(r.get("overall_pass", False) for r in results_list)
+            
+            test_results_collector[case_id] = avg_result
+        else:
+            test_results_collector[case_id] = results_list[0]
+            
     _execute_baseline_and_report_logic()
 
 

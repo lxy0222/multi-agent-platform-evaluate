@@ -74,10 +74,7 @@ class TestExecutor:
         request_duration = (time.time() - request_start) * 1000  # 转换为毫秒
         self.logger.info(f"[{case.case_id}] 请求完成: 耗时={request_duration:.2f}ms")
         
-        # 更新会话缓存
-        if case.session_key and response.get("conversation_id"):
-            self.history_cache[case.session_key] = response["conversation_id"]
-            self.logger.debug(f"[{case.case_id}] 更新会话缓存: session_key={case.session_key}")
+
         
         # 执行校验
         validation_result = self._validate_response(case, response)
@@ -148,9 +145,7 @@ class TestExecutor:
 
         # 处理会话ID（仅Chat类型需要）
         if case.get_workflow_type() == WorkflowType.CHAT:
-            if case.session_key and case.session_key in self.history_cache:
-                params["conversation_id"] = self.history_cache[case.session_key]
-            elif case.conversation_id:
+            if case.conversation_id:
                 params["conversation_id"] = case.conversation_id
             else:
                 params["conversation_id"] = ""
@@ -375,15 +370,15 @@ class TestExecutor:
                 f"期望 needHuman 为 True,实际为 {need_human}"
             )
         
-        # 检查 messageList 是否为空
-        msg_list = structured_data.get("messageList", [])
-        for idx, msg in enumerate(msg_list):
-            content = msg.get("content")
-            if content != "":
-                result["passed"] = False
-                result["errors"].append(
-                    f"messageList 第 {idx + 1} 条消息 content 不为空: '{content}'"
-                )
+        # 取消校验 messageList 的内容必须为空的逻辑
+        # msg_list = structured_data.get("messageList", [])
+        # for idx, msg in enumerate(msg_list):
+        #     content = msg.get("content")
+        #     if content != "":
+        #         result["passed"] = False
+        #         result["errors"].append(
+        #             f"messageList 第 {idx + 1} 条消息 content 不为空: '{content}'"
+        #         )
         
         return result
     

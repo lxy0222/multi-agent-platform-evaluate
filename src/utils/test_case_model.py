@@ -37,7 +37,6 @@ class UnifiedTestCase:
     dynamic_inputs: Dict[str, Any] = field(default_factory=dict)  # 动态输入参数
     
     # ========== 会话管理 ==========
-    session_key: Optional[str] = None  # 会话标识，用于多轮对话
     conversation_id: Optional[str] = None  # 具体的会话ID
     
     # ========== 预期结果 ==========
@@ -98,7 +97,6 @@ class UnifiedTestCase:
             "case_type": self.case_type.value,
             "input_query": self.input_query,
             "dynamic_inputs": self.dynamic_inputs,
-            "session_key": self.session_key,
             "conversation_id": self.conversation_id,
             "expected_action": self.expected_action,
             "expected_result": self.expected_result,

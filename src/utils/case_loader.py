@@ -242,7 +242,6 @@ class CaseLoader:
                     scene_description=row.get("场景描述", ""),
                     input_query=row.get("Input_Query", ""),
                     dynamic_inputs=dynamic_inputs,
-                    session_key=row.get("Session_Key"),
                     expected_action=row.get("Expected_Action", "Reply"),
                     expected_result=row.get("Expected_Result") or row.get("expected_result"),
                     assert_rules=assert_rules,
@@ -301,7 +300,6 @@ class CaseLoader:
                 case = UnifiedTestCase(
                     case_id=row.get("Case_ID", ""),
                     target_agent=row.get("Target_Agent", ""),
-                    session_key=row.get("Session_Key", ""),
                     scene_description=row.get("场景描述", ""),
                     case_type=TestCaseType.WORKFLOW_EXECUTION,
                     dynamic_inputs=dynamic_inputs,

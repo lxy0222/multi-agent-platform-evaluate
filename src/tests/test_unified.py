@@ -32,7 +32,7 @@ test_logger.info(f"加载测试用例数量: {len(test_cases)}")
 class TestUnifiedFramework:
     """统一测试框架"""
     
-    @pytest.mark.parametrize("case", test_cases, ids=lambda c: c.case_id)
+    @pytest.mark.parametrize("case", test_cases, ids=lambda c: getattr(c, 'case_id', str(c)))
     def test_unified_case(self, case, client_factory, evaluator, results_collector):
         """
         统一的测试用例执行方法
@@ -78,7 +78,6 @@ class TestUnifiedFramework:
                 "场景描述": case.scene_description,
                 "用例类型": case.case_type.value,
                 "预期动作": case.expected_action,
-                "会话标识": case.session_key,
             }
             test_logger.info(f"[{case.case_id}] 用例信息: {json.dumps(case_info, ensure_ascii=False)}")
             allure.attach(
@@ -136,7 +135,8 @@ class TestUnifiedFramework:
                 attachment_type=allure.attachment_type.JSON
             )
             
-            # 断言
+            # 断言（先记录不退出，以跑完软校验）
+            error_msg = ""
             if not result["success"]:
                 error_msg = "\n".join(validation["errors"])
                 test_logger.error(f"[{case.case_id}] 测试失败: {error_msg}")
@@ -145,7 +145,7 @@ class TestUnifiedFramework:
                     name="失败原因",
                     attachment_type=allure.attachment_type.TEXT
                 )
-                pytest.fail(f"测试失败:\n{error_msg}")
+                # pytest.fail(f"测试失败:\n{error_msg}")
             else:
                 test_logger.info(f"[{case.case_id}] 硬规则校验通过")
                 allure.attach(
@@ -159,11 +159,12 @@ class TestUnifiedFramework:
         # ==========================================
         with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
             
-            # 记录评估结果
-            case_logger.log_evaluation(result['llm_evaluation'])
+            # 安全获取 eval_data
+            eval_data = result.get('llm_evaluation') or {}
             
-            # 将评分结果写入报告 - 使用层级结构显示
-            eval_data = result['llm_evaluation']
+            if eval_data:
+                # 记录评估结果
+                case_logger.log_evaluation(eval_data)
             
             # 创建评估结果摘要
             with allure.step("📊 评估结果摘要"):
@@ -275,9 +276,9 @@ class TestUnifiedFramework:
                 attachment_type=allure.attachment_type.JSON
             )
             
-            overall_score = result['llm_evaluation'].get("overall_score", 0)
-            overall_reason = result['llm_evaluation'].get("overall_reason", "无")
-            dimensions = result['llm_evaluation'].get("dimensions", {})
+            overall_score = eval_data.get("overall_score", 0)
+            overall_reason = eval_data.get("overall_reason", "无")
+            dimensions = eval_data.get("dimensions", {})
             
             # 在报告摘要中显示分数和各维度通过状态
             allure.dynamic.parameter("LLM评估结论", "✅ 通过" if pass_status else "❌ 未通过")
@@ -314,9 +315,9 @@ class TestUnifiedFramework:
             "validation_passed": result["success"],
             "overall_score": overall_score,
             "overall_reason": overall_reason,
-            "overall_pass": result['llm_evaluation'].get("pass", False),
+            "overall_pass": (result.get('llm_evaluation') or {}).get("pass", False),
             "dimensions": dimensions,  # 新增：各维度详细评分
-            "suggestions": result['llm_evaluation'].get("suggestions", []),  # 新增：改进建议
+            "suggestions": (result.get('llm_evaluation') or {}).get("suggestions", []),  # 新增：改进建议
             "metrics": result.get("metrics", {}),
             "duration_ms": result.get("metrics", {}).get("total_duration_ms", 0),
             "response_time_ms": result.get("metrics", {}).get("response_time_ms", 0),
@@ -324,11 +325,17 @@ class TestUnifiedFramework:
         }
         
         # 保存到全局收集器
-        results_collector[case.case_id] = test_result_data
+        if case.case_id not in results_collector:
+            results_collector[case.case_id] = []
+        results_collector[case.case_id].append(test_result_data)
         
         # 结束用例日志记录
         case_logger.finish(result["success"], overall_score)
         
         # 缓冲时间(避免请求过快)
         time.sleep(2)
+        
+        # 在用例最后进行统一断言，以便软校验跑完后如果硬校验失败依然标记用例为 fail
+        if not result["success"]:
+            pytest.fail(f"硬规则校验等基础执行失败:\n{error_msg}")
 
