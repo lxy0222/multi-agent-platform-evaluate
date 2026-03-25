@@ -47,12 +47,6 @@ class Evaluator:
             errors.append("包含长英文句子")
             self.logger.warning(f"硬规则检查失败: 包含长英文句子")
 
-        # 3. 预期动作检查
-        if expected_type == "Block" and text.strip() != "":
-            # 比如 text 为空才算 Block 成功
-            # 或者 text 包含 "无需回复"
-            pass
-
         if expected_type == "Delay" and "delay" not in text:
             # 如果不是完全等于 delay，可能需要报错
             pass

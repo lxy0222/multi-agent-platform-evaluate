@@ -62,31 +62,31 @@ class TestExecutor:
         
         # 执行请求
         workflow_type = case.get_workflow_type()
-        request_start = time.time()
-        
         if workflow_type == WorkflowType.CHAT:
             self.logger.info(f"[{case.case_id}] 执行Chat请求")
             response = self._execute_chat(client, request_params, case)
         else:
             self.logger.info(f"[{case.case_id}] 执行Workflow请求")
             response = self._execute_workflow(client, request_params, case)
-        
-        request_duration = (time.time() - request_start) * 1000  # 转换为毫秒
-        self.logger.info(f"[{case.case_id}] 请求完成: 耗时={request_duration:.2f}ms")
+
+        # 提取从内层函数传上来的“纯粹收发包掐表耗时”，剥离掉所有打印日志的 IO 时间
+        request_duration = response.get('_api_latency_ms', (time.time() - start_time) * 1000)
+        self.logger.info(f"[{case.case_id}] 请求完成: 精准纯净耗时(RTT)={request_duration:.2f}ms")
         
 
         
         # 执行校验
         validation_result = self._validate_response(case, response)
         
-        # 执行LLM评估（如果配置了评估器）
+        # 判断是否需要执行 LLM 软打分评估
         llm_evaluation_result = None
         if hasattr(self.evaluator, 'llm_evaluate') and response.get("answer"):
-            try:
-                llm_evaluation_result = self._perform_llm_evaluation(case, response)
-                self.logger.info(f"[{case.case_id}] LLM评估完成: score={llm_evaluation_result.get('overall_score', 0)}")
-            except Exception as e:
-                self.logger.error(f"[{case.case_id}] LLM评估失败: {str(e)}")
+            if self._should_run_llm_eval(case, validation_result):
+                try:
+                    llm_evaluation_result = self._perform_llm_evaluation(case, response)
+                    self.logger.info(f"[{case.case_id}] LLM评估完成: score={llm_evaluation_result.get('overall_score', 0)}")
+                except Exception as e:
+                    self.logger.error(f"[{case.case_id}] LLM评估失败: {str(e)}")
         
         # 计算评估指标
         total_duration = (time.time() - start_time) * 1000
@@ -121,6 +121,30 @@ class TestExecutor:
         return result
 
     
+    def _should_run_llm_eval(self, case: UnifiedTestCase, validation_result: Dict) -> bool:
+        """判断当前用例是否需要走大模型软打分评估阶段"""
+        ground_truth = case.ground_truth or {}
+        
+        # 1. 显式开关：如果指定 need_llm_eval = False，一票否决
+        # 默认情况下，只要不明确写 False，都默认放行去跑大模型评分（因为 Dify 裁判本身自带默认打分Prompt）
+        if ground_truth.get("need_llm_eval") is False:
+            self.logger.info(f"[{case.case_id}] 配置显式跳过 LLM 大模型评分阶段")
+            return False
+            
+        # 2. 核心业务阻断判断：如果用例的预期行为就是为了测试“触发转人工接管系统”，
+        # 那么此时 AI 只是吐出一句敷衍的制式话术甚至不吐文本，去打分毫无意义，智能跳出。
+        system_state = ground_truth.get("hard_rules", {}).get("system_state", {})
+        if system_state.get("need_human") is True:
+            self.logger.info(f"[{case.case_id}] 当前为转人工防线测试用例，无需主观打分，自动跳过")
+            return False
+            
+        # 3. Fail Fast 智能止损机制：前面的结构/拦截硬校验如果没过，就不用跑 LLM 写小作文了
+        if not validation_result.get("passed", False):
+            self.logger.warning(f"[{case.case_id}] 底层硬校验阻断连接 (Fail Fast)，及时中止后续 LLM 打分资源消耗")
+            return False
+            
+        return True
+
     def _prepare_request(self, case: UnifiedTestCase) -> Dict[str, Any]:
         """准备请求参数"""
         # 复制动态输入，避免修改原始数据
@@ -187,12 +211,15 @@ class TestExecutor:
                         inputs_log[key] = value
                 self.logger.info(f"[{case.case_id}]   - inputs: {json.dumps(inputs_log, ensure_ascii=False)}")
             
+            _api_start = time.time()
             response = client.send_message(
                 query=params["query"],
                 inputs=params["inputs"],
                 user=params["user"],
                 conversation_id=params.get("conversation_id", "")
             )
+            # 在收到返回的瞬间记录结束时间，完全剥离前后的框架打桩耗时
+            response['_api_latency_ms'] = (time.time() - _api_start) * 1000
             
             # 记录响应信息
             if response.get("status") == "success":
@@ -249,10 +276,13 @@ class TestExecutor:
                 self.logger.info(f"[{case.case_id}]   - inputs: {json.dumps(inputs_log, ensure_ascii=False)}")
             
             # Workflow只需要inputs和user参数
+            _api_start = time.time()
             response = client.run_workflow(
                 inputs=params["inputs"],
                 user=params["user"]
             )
+            # 记录Workflow发包返回纯净耗时
+            response['_api_latency_ms'] = (time.time() - _api_start) * 1000
             
             # 记录响应信息
             if response.get("status") == "success":
@@ -307,27 +337,152 @@ class TestExecutor:
         # 提取AI回复内容
         ai_reply = self._extract_reply(response)
         
-        # 执行硬规则检查
-        hard_check_passed, hard_errors = self.evaluator.hard_check(
+        hard_rules = case.ground_truth.get("hard_rules", {})
+        
+        # 1. 解析结果校验
+        if hard_rules.get("require_valid_json"):
+            json_errs = []
+            if not response.get("json_data"):
+                json_errs.append("要求返回有效的结构化 JSON 数据，但解析为空或失败")
+            validation_result["checks"].append({
+                "type": "JSON结果解析约束 (require_valid_json)",
+                "passed": len(json_errs) == 0,
+                "requirement": "True",
+                "errors": json_errs
+            })
+            
+        # 2. 违禁词汇检测
+        forbidden_words = hard_rules.get("forbidden_words", [])
+        if forbidden_words:
+            forb_errs = []
+            for word in forbidden_words:
+                if word in ai_reply:
+                    forb_errs.append(f"合规拦截：回复中包含了绝对禁用词汇 '{word}'")
+            validation_result["checks"].append({
+                "type": "业务违禁词拦截 (forbidden_words)",
+                "passed": len(forb_errs) == 0,
+                "requirement": str(forbidden_words),
+                "errors": forb_errs
+            })
+                
+        # 3. 必须包含的语义核心词
+        must_include = hard_rules.get("must_include_words", hard_rules.get("must_include", []))
+        if must_include:
+            inc_errs = []
+            for word in must_include:
+                if word not in ai_reply:
+                    inc_errs.append(f"语义缺失：回复未命中必须提及的关键词 '{word}'")
+            validation_result["checks"].append({
+                "type": "必含核心语义词检测 (must_include)",
+                "passed": len(inc_errs) == 0,
+                "requirement": str(must_include),
+                "errors": inc_errs
+            })
+
+        # 工具调用判断
+        tool_calling = hard_rules.get("tool_calling", {})
+        if tool_calling:
+            tool_errs = []
+            must_call = tool_calling.get("must_call_tool")
+            must_not_call = tool_calling.get("must_not_call_tool")
+            
+            # 使用全量字典字符串匹配的方式兜底查找工具调用特征（Dify底层通常会将工具动作记在JSON某处）
+            response_json_str = json.dumps(response, ensure_ascii=False)
+            
+            if must_call and must_call not in response_json_str:
+                tool_errs.append(f"工具调用错误：要求必须调用工具 '{must_call}'，但在执行链路中未检测到调用记录")
+                
+            if must_not_call and must_not_call in response_json_str:
+                tool_errs.append(f"工具调用错误：要求绝对禁止调用工具 '{must_not_call}'，但实际被触发了")
+                
+            validation_result["checks"].append({
+                "type": "工具插件调用断言 (tool_calling)",
+                "passed": len(tool_errs) == 0,
+                "requirement": str(tool_calling),
+                "errors": tool_errs
+            })
+
+        # 新增：正则校验（多用于特定外链或格式匹配）
+        expected_link = hard_rules.get("expected_link_match")
+        if expected_link:
+            import re
+            link_errs = []
+            if not re.search(expected_link, ai_reply):
+                link_errs.append(f"正则/外链匹配失败：回复中未命中特定匹配模式 '{expected_link}'")
+            validation_result["checks"].append({
+                "type": "正则及外链校验 (expected_link_match)",
+                "passed": len(link_errs) == 0,
+                "requirement": expected_link,
+                "errors": link_errs
+            })
+
+        # 4. 执行状态树断言
+        system_state = hard_rules.get("system_state", {})
+        if system_state:
+            state_errs = []
+            msgs = response.get("json_data", {}).get("messageList", [])
+            
+            # 校验需转人工标志
+            if "need_human" in system_state:
+                is_human = response.get("json_data", {}).get("needHuman") is True
+                if is_human != system_state["need_human"]:
+                    state_errs.append(f"底层状态错误：人工接管状态实际为 {is_human}，但预期应为 {system_state['need_human']}")
+            
+            # 校验消息队列是否放空（特定动作要求）
+            if system_state.get("messageList_empty") is True:
+                for msg in msgs:
+                    if msg.get("content"):
+                        state_errs.append(f"底层状态错误：预期 messageList 内容字段必须为空，但存在输出: '{msg.get('content')}'")
+            
+            # 校验是否发送了卡片
+            if system_state.get("has_mini_program") is True:
+                has_mp = any(
+                    msg.get("msgType", "").lower() in ["miniprogram", "mini_program"] or 
+                    "appid" in str(msg.get("content", "")).lower() 
+                    for msg in msgs
+                )
+                if not has_mp:
+                    state_errs.append("转化漏斗错误：预期应该下发小程序卡片(has_mini_program=True)，但未从消息流检测到卡片特征")
+
+            # 校验是否发送了图片或海报图片
+            if system_state.get("has_image_poster") is True:
+                has_img = any(
+                    msg.get("msgType", "").lower() == "image" or 
+                    (".jpg" in str(msg.get("content", "")).lower() or ".png" in str(msg.get("content", "")).lower()) 
+                    for msg in msgs
+                )
+                if not has_img:
+                    state_errs.append("动作断言错误：预期应该下发图片海报(has_image_poster=True)，但未从消息流检测到图片类型")
+
+            validation_result["checks"].append({
+                "type": "系统流转状态检测 (system_state)",
+                "passed": len(state_errs) == 0,
+                "requirement": str(system_state),
+                "errors": state_errs
+            })
+        
+        # 5. 这里的硬校验为所有用例common check list，包含那种英文、思维链校验
+        old_hard_check_passed, old_hard_errors = self.evaluator.hard_check(
             ai_reply, 
             case.expected_action
         )
-        
         validation_result["checks"].append({
-            "type": "hard_check",
-            "passed": hard_check_passed,
-            "errors": hard_errors
+            "type": "系统底层基础校验 (System Target)",
+            "passed": old_hard_check_passed,
+            "requirement": f"expected_action={case.expected_action}",
+            "errors": old_hard_errors
         })
         
-        if not hard_check_passed:
-            validation_result["passed"] = False
-            validation_result["errors"].extend(hard_errors)
+        # 汇总：把所有 checks 里没过关的 error 都塞回全局 passed
+        for chk in validation_result["checks"]:
+            if not chk.get("passed"):
+                validation_result["passed"] = False
+                validation_result["errors"].extend(chk.get("errors", []))
         
-        # 检查转人工（如果需要）
-        if case.should_check_human_transfer():
+        # 兼容原本独有的转人工检查配置
+        if case.should_check_human_transfer() and "need_human" not in system_state:
             human_check_result = self._check_human_transfer(response)
             validation_result["checks"].append(human_check_result)
-            
             if not human_check_result["passed"]:
                 validation_result["passed"] = False
                 validation_result["errors"].extend(human_check_result["errors"])
@@ -492,13 +647,27 @@ class TestExecutor:
                     f"humanReason={human_reason}"
                 )
 
+        # 提取软校验预期，以无感拼接到 expected_output 传给 Dify Agent
+        soft_rules = case.ground_truth.get("soft_rules", {})
+        expected_output_val = ""
+        if soft_rules:
+            if list(soft_rules.keys()) == ["expected_result"]:
+                expected_output_val = soft_rules["expected_result"]
+            else:
+                # 包装为友好的强提示格式返回给 Dify Prompt 的 {{expected_result}}
+                expected_output_val = (
+                    "【当前用例专属打分要求 (Local Soft Rules)】\n"
+                    "请额外结合以下给出的这道题的专属客观校验预期对 AI 回复进行打分：\n"
+                    f"{json.dumps(soft_rules, ensure_ascii=False, indent=2)}"
+                )
+
         # 准备评估参数
         eval_params = {
             "case_id": case.case_id,
             "inputs": case.input_query,
             "actual_output": ai_reply,
             "scene": case.scene_description,
-            "expected_output": case.expected_result,
+            "expected_output": expected_output_val,
             "context_inputs": case.dynamic_inputs,
             "eval_dimensions": eval_inputs.get("eval_dimensions", []),
             "dimension_criteria": eval_inputs.get("dimension_criteria", {}),

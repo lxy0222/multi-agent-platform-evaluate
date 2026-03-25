@@ -39,10 +39,9 @@ class UnifiedTestCase:
     # ========== 会话管理 ==========
     conversation_id: Optional[str] = None  # 具体的会话ID
     
-    # ========== 预期结果 ==========
+    # ========== 预期结果 (Ground Truth) ==========
+    ground_truth: Dict[str, Any] = field(default_factory=dict)  # 结构化的客观/主观预期结果
     expected_action: str = "Reply"  # 预期动作：Reply, Block, Delay等
-    expected_result: Optional[str] = None  # 预期回复内容（用于LLM评估）
-    assert_rules: List[str] = field(default_factory=list)  # 断言规则列表
     
     # ========== LLM评估相关 ==========
     eval_dimensions: List[str] = field(default_factory=list)  # 评估维度列表
@@ -99,8 +98,7 @@ class UnifiedTestCase:
             "dynamic_inputs": self.dynamic_inputs,
             "conversation_id": self.conversation_id,
             "expected_action": self.expected_action,
-            "expected_result": self.expected_result,
-            "assert_rules": self.assert_rules,
+            "ground_truth": self.ground_truth,
             "eval_dimensions": self.eval_dimensions,
             "dimension_criteria": self.dimension_criteria,
             "accuracy_criteria": self.accuracy_criteria,
@@ -126,7 +124,13 @@ class UnifiedTestCase:
     
     def should_check_human_transfer(self) -> bool:
         """是否需要检查转人工"""
-        return "转人工" in self.assert_rules or any(
+        if self.ground_truth and "hard_rules" in self.ground_truth:
+            system_state = self.ground_truth["hard_rules"].get("system_state", {})
+            if system_state.get("need_human") is True:
+                return True
+                
+        # 兼容旧逻辑
+        return any(
             rule in self.metadata.get("Assert", "") 
             for rule in ["转人工", "needHuman"]
         )

@@ -113,30 +113,63 @@ class TestUnifiedFramework:
             # 提取AI回复
             ai_reply = executor._extract_reply(result["response"])
             test_logger.info(f"[{case.case_id}] AI回复: {ai_reply[:200]}...")  # 只记录前200字符
+            
+            metrics = result.get("metrics", {})
+            response_time = metrics.get("response_time_ms", 0)
+            total_duration = metrics.get("total_duration_ms", 0)
+            
+            # 显示指标在面板
+            allure.dynamic.parameter("Agent首字或推理耗时(ms)", response_time)
+            allure.dynamic.parameter("API全链路完整耗时(ms)", total_duration)
+
             allure.attach(
-                ai_reply,
-                name="AI回复内容",
+                f"⏱️ 【耗时性能指标】\nAgent 核心推理响应耗时: {response_time}ms\n平台 API 请求全链路耗时: {total_duration}ms\n\n"
+                f"📝 【AI 回复明文提取】\n{ai_reply}",
+                name="AI回复及性能指标",
                 attachment_type=allure.attachment_type.TEXT
             )
         
         # ==========================================
         # 步骤3: 校验结果
         # ==========================================
-        with allure.step("步骤3: 校验结果"):
+        with allure.step("步骤3: 校验结果 (Hard Checks)"):
             validation = result["validation"]
             
-            # 记录校验结果
-            case_logger.log_validation(validation)
+            # 构造直白、清晰的纯文本结构报表
+            check_summary = ["【🛡️ 结构与业务硬校验检查点】\n"]
             
-            # 记录校验详情
+            checks = validation.get("checks", [])
+            for check in checks:
+                check_type = check.get("type", "Unknown Check")
+                passed = check.get("passed", False)
+                icon = "✅ [通过]" if passed else "❌ [阻断]"
+                
+                check_summary.append(f"{icon} {check_type}")
+                
+                req = check.get("requirement")
+                if req:
+                    check_summary.append(f"    🔸 配置要求: {req}")
+                    
+                if not passed:
+                    errors = check.get("errors", [])
+                    for err in errors:
+                        check_summary.append(f"    ↳ 💥 {err}")
+                        
+            allure.attach(
+                "\n".join(check_summary) if checks else "当前用例未包含且未执行任何硬校验规则",
+                name="📍 [必看] 硬规则检查清单",
+                attachment_type=allure.attachment_type.TEXT
+            )
+            
+            # 记录原始日志兜底
+            case_logger.log_validation(validation)
             allure.attach(
                 json.dumps(validation, ensure_ascii=False, indent=2),
-                name="校验详情",
+                name="💻 [底层] 校验器生成的 JSON 明细",
                 attachment_type=allure.attachment_type.JSON
             )
             
-            # 断言（先记录不退出，以跑完软校验）
-            error_msg = ""
+            # 断言 (Fail Fast)
             if not result["success"]:
                 error_msg = "\n".join(validation["errors"])
                 test_logger.error(f"[{case.case_id}] 测试失败: {error_msg}")
@@ -145,7 +178,7 @@ class TestUnifiedFramework:
                     name="失败原因",
                     attachment_type=allure.attachment_type.TEXT
                 )
-                # pytest.fail(f"测试失败:\n{error_msg}")
+                pytest.fail(f"用例硬强验失败 (Fail Fast):\n{error_msg}")
             else:
                 test_logger.info(f"[{case.case_id}] 硬规则校验通过")
                 allure.attach(
@@ -154,7 +187,6 @@ class TestUnifiedFramework:
                     attachment_type=allure.attachment_type.TEXT
                 )
         
-        # ==========================================
         # 步骤4: LLM 智能评估
         # ==========================================
         with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
@@ -165,109 +197,118 @@ class TestUnifiedFramework:
             if eval_data:
                 # 记录评估结果
                 case_logger.log_evaluation(eval_data)
-            
-            # 创建评估结果摘要
-            with allure.step("📊 评估结果摘要"):
-                # 医疗评估器写入的是 'pass' key，兼容旧的 'overall_pass'
+                
+                # ---------------------
+                # 构造高颜值的 HTML 可视化报表
+                # ---------------------
                 pass_status = bool(eval_data.get('pass', eval_data.get('overall_pass', False)))
-
-                summary = (
-                    f"总体评分: {eval_data.get('overall_score', 0)}/100\n"
-                    f"通过状态: {'✅ 通过' if pass_status else '❌ 未通过'}\n"
-                    f"评估理由: {eval_data.get('overall_reason', '无')}"
-                )
-                failed_dims = eval_data.get('failed_dimensions', [])
-                if failed_dims:
-                    summary += f"\n未达阈值维度: {', '.join(failed_dims)}"
-
-                allure.attach(
-                    summary,
-                    name="摘要信息",
-                    attachment_type=allure.attachment_type.TEXT
-                )
-
-            
-            # 显示医疗分析部分（如果有）
-            medical_analysis = eval_data.get('medical_analysis', {})
-            if medical_analysis:
-                with allure.step("🏥 医疗分析"):
-                    med_analysis_text = ""
+                score = eval_data.get('overall_score', 0)
+                pass_icon = '✅' if pass_status else '❌'
+                
+                # HTML 样式预设
+                html_report = [
+                    "<html>",
+                    "<head><style>",
+                    "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 20px; color: #333; line-height: 1.6; }",
+                    "h2 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 8px; margin-top: 25px; font-size: 1.4em; }",
+                    "table { border-collapse: collapse; width: 100%; margin-top: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
+                    "th, td { border: 1px solid #e0e0e0; text-align: left; padding: 12px; }",
+                    "th { background-color: #f8f9fa; font-weight: 600; color: #444; }",
+                    "tr:nth-child(even) { background-color: #fbfcff; }",
+                    ".score-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-family: monospace; }",
+                    ".passed { background-color: #d4edda; color: #155724; }",
+                    ".failed { background-color: #f8d7da; color: #721c24; }",
+                    ".dim-row { background-color: #f1f3f5 !important; font-weight: bold; }",
+                    "</style></head>",
+                    "<body>"
+                ]
+                
+                # 最终判决
+                overall_class = "passed" if pass_status else "failed"
+                html_report.append("<h2>⚖️ 最终判决</h2>")
+                html_report.append(f"<p><b>综合得分:</b> <span class='score-badge {overall_class}'>{score}/100</span> {pass_icon}</p>")
+                html_report.append(f"<p><b>判决理由:</b> {eval_data.get('overall_reason', '无')}</p>")
+                
+                # 医疗合规
+                medical_analysis = eval_data.get('medical_analysis', {})
+                if medical_analysis:
+                    html_report.append("<h2>🏥 医疗合规分析</h2>")
+                    html_report.append("<ul>")
                     for key, value in medical_analysis.items():
                         status = "✅ 是" if value else "❌ 否"
-                        med_analysis_text += f"{key}: {status}\n"
-                    allure.attach(
-                        med_analysis_text,
-                        name="医疗分析详情",
-                        attachment_type=allure.attachment_type.TEXT
-                    )
-            
-            # 显示各维度评分 - 使用层级结构
-            dimensions = eval_data.get('dimensions', {})
-            if dimensions:
-                with allure.step("📈 维度评估详情"):
+                        html_report.append(f"<li><b>{key}</b>: {status}</li>")
+                    html_report.append("</ul>")
+                
+                # 维度打分明细
+                dimensions = eval_data.get('dimensions', {})
+                if dimensions:
+                    html_report.append("<h2>📊 维度打分明细</h2>")
+                    html_report.append("<table>")
+                    html_report.append("<tr><th width='25%'>考察维度</th><th width='12%'>得分</th><th width='8%'>状态</th><th>详细判决理由</th></tr>")
+                    
                     for dim_name, dim_data in dimensions.items():
                         if not isinstance(dim_data, dict):
                             continue
-                        dim_score = dim_data.get('score', 0)
-                        dim_threshold = dim_data.get('threshold')
-                        dim_pass = dim_data.get('pass')
-
-                        # 维度标题：带通过/未通过标记和阈值
-                        if dim_pass is not None:
-                            icon = '✅' if dim_pass else '❌'
-                            threshold_hint = f" (阈值 {dim_threshold})" if dim_threshold else ""
-                            step_title = f"{icon} {dim_name}: {dim_score}{threshold_hint}"
-                        else:
-                            step_title = f"{dim_name}: {dim_score}"
-
-                        with allure.step(step_title):
-                            for sub_dim_name, sub_dim_data in dim_data.items():
-                                if isinstance(sub_dim_data, dict) and 'score' in sub_dim_data:
-                                    sub_score = sub_dim_data.get('score', 0)
-                                    sub_thresh = sub_dim_data.get('threshold')
-                                    sub_pass = sub_dim_data.get('pass')
-                                    sub_reason = sub_dim_data.get('reason', '')
-                                    sub_details = sub_dim_data.get('details', '')
-
-                                    # 子维度步骤标题：加入通过状态和阈值
-                                    if sub_pass is not None:
-                                        sub_icon = '✅' if sub_pass else '❌'
-                                        sub_thresh_hint = f" (阈值{sub_thresh})" if sub_thresh else ""
-                                        sub_title = f"{sub_icon} {sub_dim_name}: {sub_score}/100{sub_thresh_hint}"
-                                    else:
-                                        sub_title = f"{sub_dim_name}: {sub_score}/100"
-
-                                    with allure.step(sub_title):
-                                        content = f"score: {sub_score}/100"
-                                        if sub_thresh is not None:
-                                            content += f"  |  阈值: {sub_thresh}"
-                                            content += f"  |  {'✅ 通过' if sub_pass else '❌ 未通过'}"
-                                        content += "\n\n"
-                                        if sub_reason:
-                                            content += f"reason:\n{sub_reason}\n\n"
-                                        if sub_details:
-                                            content += f"details:\n{sub_details}"
-                                        allure.attach(
-                                            content,
-                                            name="子维度详情",
-                                            attachment_type=allure.attachment_type.TEXT
-                                        )
-
-
-            
-            # 显示改进建议（如果有）
-            suggestions = eval_data.get('suggestions', [])
-            if suggestions:
-                with allure.step(f"💡 改进建议 ({len(suggestions)}条)"):
-                    suggestions_text = ""
-                    for i, suggestion in enumerate(suggestions, 1):
-                        suggestions_text += f"{i}. {suggestion}\n"
+                        d_score = dim_data.get('score', 0)
+                        d_pass = dim_data.get('pass', True)
+                        d_reason = dim_data.get('reason', '-').replace('\n', '<br>')
+                        d_icon = '✅' if d_pass else '❌'
+                        css_class = 'passed' if d_pass else 'failed'
+                        
+                        html_report.append(f"<tr class='dim-row'>")
+                        html_report.append(f"<td>{dim_name}</td>")
+                        html_report.append(f"<td><span class='score-badge {css_class}'>{d_score}/100</span></td>")
+                        html_report.append(f"<td style='text-align:center;'>{d_icon}</td>")
+                        html_report.append(f"<td style='font-size: 0.95em; color: #444;'>{d_reason}</td>")
+                        html_report.append(f"</tr>")
+                        
+                        # 子维度层级 (如果存在深度嵌套)
+                        for sub_k, sub_v in dim_data.items():
+                            if isinstance(sub_v, dict) and 'score' in sub_v:
+                                s_score = sub_v.get('score', 0)
+                                s_pass = sub_v.get('pass', True)
+                                s_icon = '✅' if s_pass else '❌'
+                                s_css_class = 'passed' if s_pass else 'failed'
+                                s_reason = sub_v.get('reason', '-').replace('\n', '<br>')
+                                
+                                html_report.append(f"<tr>")
+                                html_report.append(f"<td>&nbsp;&nbsp;&nbsp;↳ {sub_k}</td>")
+                                html_report.append(f"<td><span class='score-badge {s_css_class}'>{s_score}/100</span></td>")
+                                html_report.append(f"<td style='text-align:center;'>{s_icon}</td>")
+                                html_report.append(f"<td style='font-size: 0.9em; color: #555;'>{s_reason}</td>")
+                                html_report.append(f"</tr>")
                     
-                    allure.attach(
-                        suggestions_text,
-                        name="改进建议详情",
-                        attachment_type=allure.attachment_type.TEXT
-                    )
+                    html_report.append("</table>")
+                
+                # 改进建议
+                suggestions = eval_data.get('suggestions', [])
+                if suggestions:
+                    html_report.append("<h2>💡 改进建议</h2>")
+                    html_report.append("<ol>")
+                    for suggestion in suggestions:
+                        html_report.append(f"<li>{suggestion}</li>")
+                    html_report.append("</ol>")
+                
+                html_report.append("</body></html>")
+                
+                # 直观附加到面板
+                allure.dynamic.parameter("LLM裁判总得分", score)
+                
+                # 将美化的 HTML 添加为高亮报表附件
+                allure.attach(
+                    "\n".join(html_report),
+                    name="📍 [一目了然] 软规则打分结果报表",
+                    attachment_type=allure.attachment_type.HTML
+                )
+            else:
+                skip_msg = (
+                    "💡 本用例自动跳过了 LLM 智能打分阶段。\n\n"
+                    "跳过原因通常为以下其一：\n"
+                    "1. 🛑 Fail Fast 机制：前面的「结构与硬规则」跑出了阻断错误！为了节省 Token 和时间，引擎已强排自动掐断打分。\n"
+                    "2. 🔀 转人工防线测试：当前预期必须触发转人工 (`need_human: True`)，纯测底层网关转交，无需分析回复语义！\n"
+                    "3. 🚫 手动关闭：你的用例配置里被手动写死了 `need_llm_eval: False`。"
+                )
+                allure.attach(skip_msg, name="⚡ LLM 智能打分已跳过", attachment_type=allure.attachment_type.TEXT)
             
             # 仍然保留JSON格式用于详细分析
             allure.attach(
@@ -276,16 +317,24 @@ class TestUnifiedFramework:
                 attachment_type=allure.attachment_type.JSON
             )
             
-            overall_score = eval_data.get("overall_score", 0)
-            overall_reason = eval_data.get("overall_reason", "无")
-            dimensions = eval_data.get("dimensions", {})
-            
-            # 在报告摘要中显示分数和各维度通过状态
-            allure.dynamic.parameter("LLM评估结论", "✅ 通过" if pass_status else "❌ 未通过")
-            allure.dynamic.parameter("Overall Score", overall_score)
+            # 安全提取基础字段并赋默认值，防止未评估时变量未定义
+            eval_dict = eval_data or {}
+            overall_score = eval_dict.get("overall_score", 0)
+            overall_reason = eval_dict.get("overall_reason", "无评分(用例跳过大模型评估)")
+            dimensions = eval_dict.get("dimensions", {})
+            pass_status = bool(eval_dict.get("pass", eval_dict.get("overall_pass", False)))
+
+            if eval_data:
+                allure.dynamic.parameter("LLM评估结论", "✅ 通过" if pass_status else "❌ 未通过")
+                allure.dynamic.parameter("Overall Score", overall_score)
+            else:
+                allure.dynamic.parameter("LLM评估结论", "⏭️ 已跳过")
+                allure.dynamic.parameter("Overall Score", "N/A")
             
             response_time_ms = result.get("metrics", {}).get("response_time_ms", 0)
             allure.dynamic.parameter("Agent响应时间(ms)", response_time_ms)
+            
+            # 如果配置了子维度，在侧边栏挂载子维度的分数
             for dim_name, dim_data in dimensions.items():
                 if isinstance(dim_data, dict):
                     score = dim_data.get("score", 0)
@@ -293,12 +342,10 @@ class TestUnifiedFramework:
                     icon = ('✅' if passed else '❌') if passed is not None else ''
                     allure.dynamic.parameter(f"{dim_name}_score", f"{score}{icon}")
 
-
-            
             test_logger.info(f"[{case.case_id}] LLM评估完成: Overall Score={overall_score}, Reason={overall_reason}")
             
-            # 检查是否达到阈值
-            if overall_score < case.min_score_threshold:
+            # 只有当执行了大模型打分时，才去抛出“评分低于阈值的Warning”
+            if eval_data and overall_score < case.min_score_threshold:
                 test_logger.warning(f"[{case.case_id}] 评分低于阈值: {overall_score} < {case.min_score_threshold}")
         
         # ==========================================
@@ -334,8 +381,3 @@ class TestUnifiedFramework:
         
         # 缓冲时间(避免请求过快)
         time.sleep(2)
-        
-        # 在用例最后进行统一断言，以便软校验跑完后如果硬校验失败依然标记用例为 fail
-        if not result["success"]:
-            pytest.fail(f"硬规则校验等基础执行失败:\n{error_msg}")
-

@@ -146,12 +146,30 @@ class CaseLoader:
                     except json.JSONDecodeError:
                         print(f"⚠️ 用例 {row.get('Case_ID')} 的 Dynamic_Inputs 解析失败")
                 
-                # 解析断言规则
-                assert_rules = []
-                if row.get("Assert"):
-                    assert_str = str(row["Assert"]).strip()
-                    if assert_str and assert_str.lower() not in ["", "none", "null"]:
-                        assert_rules = [assert_str]
+                # 解析 Ground Truth / 断言规则
+                ground_truth = {"hard_rules": {}, "soft_rules": {}}
+                gt_raw = row.get("Ground_Truth") or row.get("Assert")
+                if gt_raw:
+                    gt_str = str(gt_raw).strip()
+                    if gt_str and gt_str.lower() not in ["", "none", "null"]:
+                        try:
+                            # 尝试按新式 JSON 格式加载
+                            parsed_gt = json.loads(gt_str)
+                            if isinstance(parsed_gt, dict):
+                                if "hard_rules" in parsed_gt: ground_truth["hard_rules"].update(parsed_gt["hard_rules"])
+                                if "soft_rules" in parsed_gt: ground_truth["soft_rules"].update(parsed_gt["soft_rules"])
+                                # 支持不包层的简写格式
+                                for k, v in parsed_gt.items():
+                                    if k not in ["hard_rules", "soft_rules"]:
+                                        ground_truth["hard_rules"][k] = v
+                        except json.JSONDecodeError:
+                            # 降级：当做旧版单条字符串匹配处理
+                            ground_truth["hard_rules"]["must_include"] = [gt_str]
+                
+                # 转移 Expected_Result
+                expected_result_str = row.get("Expected_Result") or row.get("expected_result")
+                if expected_result_str:
+                    ground_truth["soft_rules"]["expected_result"] = str(expected_result_str)
                 
                 # 解析评估维度
                 eval_dimensions = []
@@ -243,8 +261,7 @@ class CaseLoader:
                     input_query=row.get("Input_Query", ""),
                     dynamic_inputs=dynamic_inputs,
                     expected_action=row.get("Expected_Action", "Reply"),
-                    expected_result=row.get("Expected_Result") or row.get("expected_result"),
-                    assert_rules=assert_rules,
+                    ground_truth=ground_truth,
                     eval_dimensions=eval_dimensions,
                     dimension_criteria=dimension_criteria,
                     accuracy_criteria=accuracy_criteria,
@@ -297,6 +314,27 @@ class CaseLoader:
                     except Exception as e:
                         print(f"⚠️ 用例 {row.get('Case_ID')} 的 Chat_History 解析失败: {e}")
 
+                # 解析 Ground Truth
+                ground_truth = {"hard_rules": {}, "soft_rules": {}}
+                gt_raw = row.get("Ground_Truth") or row.get("Assert")
+                if gt_raw:
+                    gt_str = str(gt_raw).strip()
+                    if gt_str and gt_str.lower() not in ["", "none", "null"]:
+                        try:
+                            parsed_gt = json.loads(gt_str)
+                            if isinstance(parsed_gt, dict):
+                                if "hard_rules" in parsed_gt: ground_truth["hard_rules"].update(parsed_gt["hard_rules"])
+                                if "soft_rules" in parsed_gt: ground_truth["soft_rules"].update(parsed_gt["soft_rules"])
+                                for k, v in parsed_gt.items():
+                                    if k not in ["hard_rules", "soft_rules"]:
+                                        ground_truth["hard_rules"][k] = v
+                        except json.JSONDecodeError:
+                            ground_truth["hard_rules"]["must_include"] = [gt_str]
+
+                expected_result_str = row.get("Expected_Result") or row.get("expected_result")
+                if expected_result_str:
+                    ground_truth["soft_rules"]["expected_result"] = str(expected_result_str)
+
                 case = UnifiedTestCase(
                     case_id=row.get("Case_ID", ""),
                     target_agent=row.get("Target_Agent", ""),
@@ -306,8 +344,7 @@ class CaseLoader:
                     order_detail=order_detail,
                     chat_history=chat_history,
                     expected_action=row.get("Expected_Action", "Reply"),
-                    expected_result=row.get("Expected_Result") or row.get("expected_result"),
-                    assert_rules=row.get("Assert", ""),
+                    ground_truth=ground_truth,
                     metadata={"source_file": "xiaofang_fz_todo.csv"}
                 )
 
@@ -354,7 +391,12 @@ class CaseLoader:
                     input_query=input_data.get("scene", ""),
                     dynamic_inputs=metadata,
                     expected_action="Reply",
-                    expected_result=json.dumps(expected_output, ensure_ascii=False) if expected_output else None,
+                    ground_truth={
+                        "hard_rules": {},
+                        "soft_rules": {
+                            "expected_result": json.dumps(expected_output, ensure_ascii=False) if expected_output else None
+                        }
+                    },
                     metadata={
                         "source_file": "exports",
                         "expected_output": expected_output,
@@ -379,11 +421,16 @@ class CaseLoader:
                 target_agent = row.get("Target_Agent") or row.get("target_agent") or "unknown"
                 scene_desc = row.get("场景描述") or row.get("scene_description") or row.get("description") or ""
 
+                expected_res = row.get("Expected_Result") or row.get("expected_result")
+                ground_truth = {"hard_rules": {}, "soft_rules": {}}
+                if expected_res:
+                    ground_truth["soft_rules"]["expected_result"] = expected_res
+                
                 case = UnifiedTestCase(
                     case_id=case_id,
                     target_agent=target_agent,
                     scene_description=scene_desc,
-                    expected_result=row.get("Expected_Result") or row.get("expected_result"),
+                    ground_truth=ground_truth,
                     metadata={"source_file": "unknown", "raw_data": row}
                 )
 
