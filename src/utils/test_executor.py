@@ -386,13 +386,14 @@ class TestExecutor:
             must_call = tool_calling.get("must_call_tool")
             must_not_call = tool_calling.get("must_not_call_tool")
             
-            # 使用全量字典字符串匹配的方式兜底查找工具调用特征（Dify底层通常会将工具动作记在JSON某处）
-            response_json_str = json.dumps(response, ensure_ascii=False)
+            # 使用真正执行捕获流里的工具名称（避免像 Prompt 等配置文本造成字符串误匹配）
+            tool_calls_list = response.get("tool_calls", [])
+            called_tools = [t.get("tool") for t in tool_calls_list if t.get("tool")]
             
-            if must_call and must_call not in response_json_str:
-                tool_errs.append(f"工具调用错误：要求必须调用工具 '{must_call}'，但在执行链路中未检测到调用记录")
+            if must_call and must_call not in called_tools:
+                tool_errs.append(f"工具调用错误：要求必须调用工具 '{must_call}'，但在实际拦截的流式执行链路中未检测到调用记录 (实际调用的工具: {called_tools})")
                 
-            if must_not_call and must_not_call in response_json_str:
+            if must_not_call and must_not_call in called_tools:
                 tool_errs.append(f"工具调用错误：要求绝对禁止调用工具 '{must_not_call}'，但实际被触发了")
                 
             validation_result["checks"].append({
@@ -503,6 +504,8 @@ class TestExecutor:
                     if content:  # 只添加非空内容
                         contents.append(content)
                 return "\n\n".join(contents) if contents else ""
+            else:
+                return ""
         
         # 尝试从 answer 中提取
         return response.get("answer", "")

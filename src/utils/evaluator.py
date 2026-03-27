@@ -167,7 +167,8 @@ class Evaluator:
             # 调用 Dify Evaluator
             response = self.dify_evaluator.run_workflow(
                 inputs=agent_inputs,
-                user="evaluator_bot"
+                user="evaluator_bot",
+                collect_tools=False
             )
             
             self.logger.debug(f"[{case_id}] Dify响应: {json.dumps(response, ensure_ascii=False)}")

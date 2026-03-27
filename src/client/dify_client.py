@@ -10,14 +10,6 @@ from src.client.base_cliet import BaseAgentClient
 
 
 class DifyClient(BaseAgentClient):
-    # def __init__(self, api_key: str, base_url: str):
-    #     """
-    #     初始化 Dify 客户端
-    #     :param api_key: Dify 应用的 API Key (Secret Key)
-    #     :param base_url: Dify API 地址，私有部署需替换为自己的域名
-    #     """
-    #     self.api_key = api_key
-    #     self.base_url = base_url.rstrip('/')  # 去掉末尾可能多余的斜杠
 
     def __init__(self, config: dict):
         """
@@ -105,7 +97,7 @@ class DifyClient(BaseAgentClient):
                     pass
         return content
 
-    def send_message(self, query, inputs, user, response_mode="blocking", conversation_id="",compatible_mode=True):
+    def send_message(self, query, inputs, user, response_mode="blocking", conversation_id="", compatible_mode=True, collect_tools=True):
         """
         发送对话
         :param query:
@@ -115,6 +107,8 @@ class DifyClient(BaseAgentClient):
         :param conversation_id:
         :param compatible_mode: True = 模拟 Java 客户端行为 (把当前 query 包装成 JSON 字符串发给 Dify)
                                 False = 标准 Dify 行为 (query 传纯文本)
+        :param collect_tools: True = 收集工具调用信息（默认，用于硬校验）
+                              False = 跳过工具解析，仅返回 answer（用于软校验/LLM 评分，避免浪费时间）
         :return:
         """
         url = f"{self.base_url}/chat-messages"
@@ -155,7 +149,7 @@ class DifyClient(BaseAgentClient):
         payload = {
             "inputs": inputs,
             "query": final_query,
-            "response_mode": response_mode,
+            "response_mode": "streaming", # 强制改为流式输出，方便捕获工具调用
             "user": user,
             "auto_generate_name": False,
             "conversation_id": conversation_id
@@ -199,7 +193,8 @@ class DifyClient(BaseAgentClient):
         try:
             # 发起请求
             # timeout 使用配置的值，防止大模型生成太慢导致脚本挂起
-            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            # 开启 stream=True
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
 
             # 检查 HTTP 状态码
             if response.status_code != 200:
@@ -210,54 +205,151 @@ class DifyClient(BaseAgentClient):
                 }
             # response.raise_for_status()
 
-            # 解析响应
-            result = response.json()
+            # 解析流式响应
+            full_answer = ""
+            task_id = None
+            ret_conversation_id = conversation_id
+            tool_calls = []
+            raw_events = []
 
-            # 记录响应信息
-            self.logger.info(f"收到Dify响应 - 状态码: {response.status_code}")
-            self.logger.info(f"响应耗时: {response.elapsed.total_seconds():.2f}秒")
-            self.logger.info(f"响应头: {dict(response.headers)}")
+            if collect_tools:
+                # 用于 agent_log 去重：seen_agent_log_ids 防止同一条 entry_id 被处理两次
+                # round_id_to_entry 用于 CALL 子层通过 parent_id 找到对应 ROUND 记录并补充完整入参/出参
+                seen_agent_log_ids = set()
+                round_id_to_entry = {}  # round entry_id -> tool_calls 列表中对应的 dict 引用
+                # node_id -> 节点名称映射，供 agent_log 反查父 Agent 节点名
+                node_id_to_title = {}
             
-            # 记录响应体（敏感信息做脱敏处理）
-            result_log = {}
-            for key, value in result.items():
-                if isinstance(value, str) and len(value) > 500:
-                    result_log[key] = f"{value[:200]}...[{len(value)-200}字符已省略]"
-                elif key in ['api_key', 'secret', 'password', 'token', 'bearer_token']:
-                    result_log[key] = "[敏感信息已隐藏]"
-                else:
-                    result_log[key] = value
-            self.logger.info(f"响应体: {json.dumps(result_log, ensure_ascii=False)}")
+            for line in response.iter_lines():
+                if line:
+                    decoded_string = line.decode('utf-8').strip()
+                    if decoded_string.startswith('data:'):
+                        data_str = decoded_string[5:].strip()
+                        if not data_str or data_str == "ping":
+                            continue
+                        try:
+                            event_data = json.loads(data_str)
+                            raw_events.append(event_data)
+                            event_type = event_data.get('event')
 
-            # 【重要】标准化返回结果
-            # Dify Workflow 的返回结构通常在 data.outputs 中
-            # 即使 HTTP 200，Dify 内部也可能报错，需要检查
-            if 'task_id' in result and 'answer' in result:
-                raw_answer = result['answer']
+                            if event_type in ['message', 'agent_message']:
+                                full_answer += event_data.get('answer', '')
+                                if 'task_id' in event_data: task_id = event_data['task_id']
+                                if 'conversation_id' in event_data: ret_conversation_id = event_data['conversation_id']
+                            elif collect_tools and event_type == 'agent_thought':
+                                tool_name = event_data.get('tool')
+                                if tool_name:
+                                    tool_calls.append({
+                                        'tool': tool_name,
+                                        'tool_input': event_data.get('tool_input'),
+                                        'observation': event_data.get('observation')
+                                    })
+                            elif collect_tools and event_type in ['node_started', 'node_finished']:
+                                # 收集 node_id -> title 映射，供 agent_log 反查调用节点名称
+                                data_node = event_data.get('data', {})
+                                _nid = data_node.get('node_id')
+                                _ntitle = data_node.get('title')
+                                if _nid and _ntitle:
+                                    node_id_to_title[_nid] = _ntitle
 
-                # 【关键步骤】尝试解析 JSON 字符串
-                parsed_answer = raw_answer
-                try:
-                    if isinstance(raw_answer, str) and (
-                            raw_answer.strip().startswith('{') or raw_answer.strip().startswith('[')):
-                        parsed_answer = json.loads(raw_answer)
-                except json.JSONDecodeError:
-                    # 如果解析失败，说明是大模型直接输出的普通文本，不是 JSON
-                    pass
+                                if event_type == 'node_finished':
+                                    # 兼容 Chatflow 中出现的画布工具节点
+                                    node_type = data_node.get('node_type')
+                                    title = data_node.get('title')
+                                    if node_type in ['tool', 'http-request']:
+                                        tool_calls.append({
+                                            'tool': title,
+                                            'caller_node': title,
+                                            'node_type': node_type,
+                                            'inputs': data_node.get('inputs'),
+                                            'outputs': data_node.get('outputs')
+                                        })
+                            elif collect_tools and event_type == 'agent_log':
+                                # 兼容 Chatflow 内部 Agent 节点的工具调用记录
+                                # Dify agent_log 层次结构：
+                                #   ROUND 汇总层 (parent_id=None)：每轮一条，含 action_name + observation。
+                                #                                  每轮对应一次工具调用或 Final Answer。
+                                #   Thought 子层 (parent_id=ROUND_id)：LLM思考，含 action + action_input。
+                                #   CALL 子层 (parent_id=ROUND_id)：工具执行结果，含 tool_name + tool_call_args + output。
+                                #              tool_call_args 比 ROUND 的 action_input 更完整（可能多额外字段）。
+                                # 用 entry_id (data.id) 去重，防止 start+success 两条被重复处理。
+                                outer = event_data.get('data', {})
+                                entry_id = outer.get('id')
+                                entry_status = outer.get('status')
+                                parent_id = outer.get('parent_id')
+                                label = outer.get('label', '')
+                                # outer.node_id 是父级 Agent 节点的 ID，反查其名称
+                                agent_node_id = outer.get('node_id')
+                                agent_node_title = node_id_to_title.get(agent_node_id, agent_node_id)
 
+                                if entry_status != 'success' or entry_id in seen_agent_log_ids:
+                                    pass  # 跳过 start 事件和已处理过的 id
+                                else:
+                                    seen_agent_log_ids.add(entry_id)
+                                    log_data = outer.get('data', {})
+
+                                    if parent_id is None:
+                                        # --- ROUND 汇总层 ---
+                                        action_name = log_data.get('action_name') or log_data.get('action') or log_data.get('tool_name')
+                                        # 排除 Final Answer 和非法工具名
+                                        if (action_name
+                                                and isinstance(action_name, str)
+                                                and action_name != 'Final Answer'
+                                                and not action_name.strip().startswith('{')):
+                                            entry = {
+                                                'tool': action_name,
+                                                'caller_node': agent_node_title, # 记录调用该工具的 Agent 节点名
+                                                'node_type': 'agent_log_tool',
+                                                'inputs': log_data.get('action_input'),
+                                                'tool_call_args': None,
+                                                'outputs': log_data.get('observation'),
+                                                'thought': log_data.get('thought')
+                                            }
+                                            tool_calls.append(entry)
+                                            round_id_to_entry[entry_id] = entry
+
+                                    elif label.startswith('CALL ') and parent_id in round_id_to_entry:
+                                        # --- CALL 子层 ---
+                                        target_entry = round_id_to_entry[parent_id]
+                                        target_entry['tool_call_args'] = log_data.get('tool_call_args')
+                                        if log_data.get('output'):
+                                            target_entry['outputs'] = log_data.get('output')
+                        except json.JSONDecodeError:
+                            pass
+
+            self.logger.info(f"抓取到流事件数: {len(raw_events)}, 识别出工具调用: {len(tool_calls)}次")
+            if collect_tools and tool_calls:
+                self.logger.info(f"识别到的工具调用详情（共 {len(tool_calls)} 次）:")
+                for i, tc in enumerate(tool_calls, 1):
+                    self.logger.info(f"  [{i}] 工具: {tc.get('tool')}  调用节点: {tc.get('caller_node', '-')}  类型: {tc.get('node_type')}")
+                    # 入参：优先展示更完整的 tool_call_args，如是画布工具节点就用 inputs
+                    actual_inputs = tc.get('tool_call_args') or tc.get('inputs')
+                    self.logger.info(f"    入参: {json.dumps(actual_inputs, ensure_ascii=False, default=str)}")
+                    self.logger.info(f"    出参: {json.dumps(tc.get('outputs'), ensure_ascii=False, default=str)}")
+
+            parsed_answer = full_answer
+            try:
+                if isinstance(full_answer, str) and (
+                        full_answer.strip().startswith('{') or full_answer.strip().startswith('[')):
+                    parsed_answer = json.loads(full_answer)
+            except json.JSONDecodeError:
+                pass
+
+            if task_id or full_answer:
                 return {
                     "status": "success",
-                    "answer": raw_answer,  # 原始字符串 (用于正则匹配/长度检查)
-                    "json_data": parsed_answer,  # 解析后的对象 (用于字段检查)
-                    "task_id": result.get('task_id'),
-                    "conversation_id": result.get('conversation_id'),
-                    "raw_outputs": result  # 保留完整元数据
+                    "answer": full_answer,
+                    "json_data": parsed_answer,
+                    "task_id": task_id,
+                    "conversation_id": ret_conversation_id,
+                    "tool_calls": tool_calls,
+                    "raw_outputs": raw_events  
                 }
             else:
                 return {
                     "status": "error",
-                    "answer": f"Dify Error: {result}",
-                    "raw_outputs": {}
+                    "answer": f"Dify Error (Empty Events) or Unknown",
+                    "raw_outputs": raw_events
                 }
 
         except requests.exceptions.RequestException as e:
@@ -275,9 +367,11 @@ class DifyClient(BaseAgentClient):
                 "raw_outputs": {}
             }
 
-    def run_workflow(self, inputs: dict, user: str) -> dict:
+    def run_workflow(self, inputs: dict, user: str, collect_tools: bool = True) -> dict:
         """
         调用 Dify Workflow 执行接口
+        :param collect_tools: True = 收集工具调用信息（默认，用于硬校验）
+                              False = 跳过工具解析，仅返回最终 outputs
         """
         url = f"{self.base_url}/workflows/run"
         headers = {
@@ -287,7 +381,7 @@ class DifyClient(BaseAgentClient):
 
         payload = {
             "inputs": inputs,
-            "response_mode": "blocking",
+            "response_mode": "streaming", # 强制改为流式输出
             "user": user
         }
 
@@ -317,7 +411,7 @@ class DifyClient(BaseAgentClient):
             self.logger.warning(f"记录Workflow请求日志时发生错误: {str(log_e)}")
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
             
             # 记录响应信息
             self.logger.info(f"收到Dify Workflow响应 - 状态码: {response.status_code}")
@@ -328,47 +422,121 @@ class DifyClient(BaseAgentClient):
                 return {"status": "http_error", "answer": response.text}
             # response.raise_for_status()
 
-            json_res = response.json()
-            
-            # 记录Workflow响应体
-            try:
-                response_log = {}
-                for key, value in json_res.items():
-                    if isinstance(value, (dict, list)):
-                        if key == 'data' and isinstance(value, dict):
-                            data_log = {}
-                            for data_key, data_value in value.items():
-                                if isinstance(data_value, str) and len(data_value) > 500:
-                                    data_log[data_key] = f"{data_value[:200]}...[{len(data_value)-200}字符已省略]"
-                                elif data_key in ['api_key', 'secret', 'password', 'token']:
-                                    data_log[data_key] = "[敏感信息已隐藏]"
-                                else:
-                                    data_log[data_key] = data_value
-                            response_log[key] = data_log
-                        else:
-                            response_log[key] = f"[{type(value).__name__}对象，长度: {len(str(value))}字符]"
-                    elif isinstance(value, str) and len(value) > 500:
-                        response_log[key] = f"{value[:200]}...[{len(value)-200}字符已省略]"
-                    else:
-                        response_log[key] = value
-                
-                self.logger.info(f"Workflow响应体: {json.dumps(response_log, ensure_ascii=False)}")
-            except Exception as log_e:
-                self.logger.warning(f"记录Workflow响应日志时发生错误: {str(log_e)}")
-            
-            data = json_res.get('data', {})
+            raw_events = []
+            tool_calls = []
+            workflow_run_id = None
+            task_id = None
+            outputs = {}
+            status_val = "success"
 
-            output_content = data.get('outputs', {}).get('output', '')
-            workflow_run_id = json_res.get('workflow_run_id')
+            if collect_tools:
+                # 用于 agent_log 去重
+                seen_agent_log_ids = set()
+                round_id_to_entry = {}  # round entry_id -> tool_calls 内对应 dict 的引用，用于 CALL 层补充入参/出参
+                # node_id -> 节点名称映射，供 agent_log 反查父 Agent 节点名
+                node_id_to_title = {}
+
+            for line in response.iter_lines():
+                if line:
+                    decoded_string = line.decode('utf-8').strip()
+                    if decoded_string.startswith('data:'):
+                        data_str = decoded_string[5:].strip()
+                        if not data_str or data_str == "ping":
+                            continue
+                        try:
+                            event_data = json.loads(data_str)
+                            raw_events.append(event_data)
+                            event_type = event_data.get('event')
+                            data_node = event_data.get('data', {})
+
+                            if collect_tools and event_type in ['node_started', 'node_finished']:
+                                # 收集 node_id -> title 映射，供 agent_log 反查调用节点名称
+                                _nid = data_node.get('node_id')
+                                _ntitle = data_node.get('title')
+                                if _nid and _ntitle:
+                                    node_id_to_title[_nid] = _ntitle
+
+                            if collect_tools and event_type == 'node_finished':
+                                node_type = data_node.get('node_type')
+                                title = data_node.get('title')
+                                if node_type in ['tool', 'http-request']:
+                                    tool_calls.append({
+                                        'tool': title,
+                                        'caller_node': title,
+                                        'node_type': node_type,
+                                        'inputs': data_node.get('inputs'),
+                                        'outputs': data_node.get('outputs')
+                                    })
+                            elif event_type == 'workflow_finished':
+                                workflow_run_id = event_data.get('workflow_run_id')
+                                task_id = event_data.get('task_id')
+                                outputs = data_node.get('outputs', {})
+                                status_val = data_node.get('status', 'success')
+                            elif collect_tools and event_type == 'agent_log':
+                                # 兼容工作流里的 Agent 工具调用记录，与 send_message 相同策略
+                                # data_node 即 event_data['data']
+                                entry_id = data_node.get('id')
+                                entry_status = data_node.get('status')
+                                parent_id = data_node.get('parent_id')
+                                label = data_node.get('label', '')
+                                # 反查父级 Agent 节点名称
+                                agent_node_id = data_node.get('node_id')
+                                agent_node_title = node_id_to_title.get(agent_node_id, agent_node_id)
+
+                                if entry_status != 'success' or entry_id in seen_agent_log_ids:
+                                    pass  # 跳过 start 事件和已处理
+                                else:
+                                    seen_agent_log_ids.add(entry_id)
+                                    log_data = data_node.get('data', {})
+
+                                    if parent_id is None:
+                                        # --- ROUND 汇总层 ---
+                                        action_name = log_data.get('action_name') or log_data.get('action') or log_data.get('tool_name')
+                                        if (action_name
+                                                and isinstance(action_name, str)
+                                                and action_name != 'Final Answer'
+                                                and not action_name.strip().startswith('{')):
+                                            entry = {
+                                                'tool': action_name,
+                                                'caller_node': agent_node_title,
+                                                'node_type': 'agent_log_tool',
+                                                'inputs': log_data.get('action_input'),
+                                                'tool_call_args': None,
+                                                'outputs': log_data.get('observation'),
+                                                'thought': log_data.get('thought')
+                                            }
+                                            tool_calls.append(entry)
+                                            round_id_to_entry[entry_id] = entry
+
+                                    elif label.startswith('CALL ') and parent_id in round_id_to_entry:
+                                        # --- CALL 子层：补充更完整的入参和出参 ---
+                                        target_entry = round_id_to_entry[parent_id]
+                                        target_entry['tool_call_args'] = log_data.get('tool_call_args')
+                                        if log_data.get('output'):
+                                            target_entry['outputs'] = log_data.get('output')
+                        except json.JSONDecodeError:
+                            pass
+
+            self.logger.info(f"\u6293取到Workflow流事件数: {len(raw_events)}, 识别出工具调用/HTTP节点: {len(tool_calls)}次")
+            if tool_calls:
+                self.logger.info(f"识别到的工具调用详情（共 {len(tool_calls)} 次）:")
+                for i, tc in enumerate(tool_calls, 1):
+                    self.logger.info(f"  [{i}] 工具: {tc.get('tool')}  调用节点: {tc.get('caller_node', '-')}  类型: {tc.get('node_type')}")
+                    actual_inputs = tc.get('tool_call_args') or tc.get('inputs')
+                    self.logger.info(f"    入参: {json.dumps(actual_inputs, ensure_ascii=False, default=str)}")
+                    self.logger.info(f"    出参: {json.dumps(tc.get('outputs'), ensure_ascii=False, default=str)}")
+
+            output_content = outputs.get('output', '') if isinstance(outputs, dict) else str(outputs)
             parsed_data = self._safe_json_parse(output_content)
 
             return {
-                "status": data.get('status'),
-                "answer": output_content,  # 提取出的最终内容
+                "status": status_val,
+                "answer": output_content, 
                 "json_data": parsed_data,
                 "workflow_run_id": workflow_run_id,
-                "task_id": json_res.get('task_id'),
-                "raw_outputs": data.get('outputs')  # 保留原始输出用于 Debug
+                "task_id": task_id,
+                "tool_calls": tool_calls,
+                "raw_outputs": raw_events
             }
 
         except Exception as e:
