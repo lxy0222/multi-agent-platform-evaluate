@@ -227,10 +227,10 @@ overall_score:
   
   # 各维度加权计算
   dimension_weights:
-    medical_capability: 0.40
-    service_capability: 0.25
-    safety_capability: 0.20
-    system_capability: 0.15
+    medical_capability: 0.35
+    service_capability: 0.35
+    safety_capability: 0.30
+#    system_capability: 0.15
 
 # 对比评估规则
 comparison_rules:
