@@ -424,12 +424,17 @@ def log_test_summary(logger: logging.Logger, results_collector: dict):
         return
     
     total_cases = len(results_collector)
-    passed_cases = sum(1 for r in results_collector.values() if r.get("validation_passed", False))
+    hard_passed_cases = sum(1 for r in results_collector.values() if r.get("validation_passed", False))
+    passed_cases = sum(1 for r in results_collector.values() if r.get("overall_pass", False))
     failed_cases = total_cases - passed_cases
     
     # 计算评分统计
     scores = [r.get("overall_score", 0) for r in results_collector.values()]
+    hard_scores = [r.get("hard_score", 0) for r in results_collector.values()]
+    soft_scores = [r.get("soft_score") for r in results_collector.values() if r.get("soft_score") is not None]
     avg_score = sum(scores) / len(scores) if scores else 0
+    avg_hard_score = sum(hard_scores) / len(hard_scores) if hard_scores else 0
+    avg_soft_score = sum(soft_scores) / len(soft_scores) if soft_scores else 0
     max_score = max(scores) if scores else 0
     min_score = min(scores) if scores else 0
     
@@ -439,11 +444,15 @@ def log_test_summary(logger: logging.Logger, results_collector: dict):
     
     logger.info(f"\n📊 基础统计:")
     logger.info(f"  总用例数: {total_cases}")
-    logger.info(f"  通过数量: {passed_cases} ({passed_cases/total_cases*100:.1f}%)")
+    logger.info(f"  综合通过数量: {passed_cases} ({passed_cases/total_cases*100:.1f}%)")
+    logger.info(f"  硬校验通过数量: {hard_passed_cases} ({hard_passed_cases/total_cases*100:.1f}%)")
     logger.info(f"  失败数量: {failed_cases} ({failed_cases/total_cases*100:.1f}%)")
     
     logger.info(f"\n📈 评分统计:")
-    logger.info(f"  平均分: {avg_score:.2f}")
+    logger.info(f"  平均综合分: {avg_score:.2f}")
+    logger.info(f"  平均硬校验分: {avg_hard_score:.2f}")
+    if soft_scores:
+        logger.info(f"  平均软校验分: {avg_soft_score:.2f}")
     logger.info(f"  最高分: {max_score:.2f}")
     logger.info(f"  最低分: {min_score:.2f}")
     
@@ -471,7 +480,7 @@ def log_test_summary(logger: logging.Logger, results_collector: dict):
     if failed_cases > 0:
         logger.info(f"\n❌ 失败用例列表:")
         for case_id, result in results_collector.items():
-            if not result.get("validation_passed", False):
+            if not result.get("overall_pass", False):
                 score = result.get("overall_score", 0)
                 reason = result.get("overall_reason", "未知原因")
                 logger.warning(f"  - {case_id}: 评分={score:.2f}, 原因={reason}")

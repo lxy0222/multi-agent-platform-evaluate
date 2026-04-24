@@ -12,6 +12,13 @@ from src.utils.logger_config import get_logger
 
 class MedicalEvaluator(Evaluator):
     """医疗场景专用评估器"""
+
+    DIMENSION_ALIASES = {
+        "medical_capability_criteria": "medical_capability",
+        "service_capability_criteria": "service_capability",
+        "safety_capability_criteria": "safety_capability",
+        "system_capability_criteria": "system_capability",
+    }
     
     def __init__(self, judge_api_key=None, model=None, dify_config=None, 
                  metrics_config_path: str = "src/config/evaluation_metrics.yaml"):
@@ -102,6 +109,174 @@ class MedicalEvaluator(Evaluator):
         # 从配置中获取维度名称
         dimensions = list(self.metrics_config['dimensions'].keys())
         return dimensions
+
+    def _normalize_dimension_name(self, dim_name: str) -> str:
+        """将 Dify 返回的维度名统一到项目内部的大维度命名。"""
+        return self.DIMENSION_ALIASES.get(dim_name, dim_name)
+
+    def _canonicalize_dimensions(self, raw_dimensions: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """
+        将裁判返回的维度结构收敛为:
+        {
+          "medical_capability": {
+            "score": 88,
+            "reason": "...",
+            "triage_accuracy": {...}
+          }
+        }
+        """
+        if not isinstance(raw_dimensions, dict):
+            return {}
+
+        meta_keys = {"score", "reason", "details", "threshold", "pass", "score_range"}
+        canonical: Dict[str, Dict[str, Any]] = {}
+
+        for raw_name, raw_data in raw_dimensions.items():
+            dim_name = self._normalize_dimension_name(raw_name)
+
+            if not isinstance(raw_data, dict):
+                canonical[dim_name] = {
+                    "score": self._normalize_score(raw_data),
+                    "reason": "",
+                    "details": ""
+                }
+                continue
+
+            target = canonical.setdefault(dim_name, {})
+            for key in meta_keys:
+                if key in raw_data and key not in target:
+                    target[key] = raw_data[key]
+
+            for sub_name, sub_data in raw_data.items():
+                if sub_name in meta_keys:
+                    continue
+                if isinstance(sub_data, dict):
+                    target[sub_name] = dict(sub_data)
+
+        return canonical
+
+    def _recalculate_dimension_scores(self, dimensions: Dict[str, Dict[str, Any]]) -> None:
+        """按子指标等权平均，重算每个大维度的软校验分。"""
+        meta_keys = {"score", "reason", "details", "threshold", "pass", "score_range"}
+
+        for dim_name, dim_data in dimensions.items():
+            if not isinstance(dim_data, dict):
+                continue
+
+            submetric_scores = []
+            for sub_name, sub_data in dim_data.items():
+                if sub_name in meta_keys:
+                    continue
+                if isinstance(sub_data, dict) and "score" in sub_data:
+                    submetric_scores.append(self._normalize_score(sub_data.get("score")))
+
+            if submetric_scores:
+                dim_data["score"] = round(sum(submetric_scores) / len(submetric_scores), 2)
+                if not dim_data.get("reason"):
+                    dim_data["reason"] = f"基于 {len(submetric_scores)} 个子维度等权平均计算。"
+            elif "score" in dim_data:
+                dim_data["score"] = self._normalize_score(dim_data.get("score"))
+
+    def _build_metric_config_map(self) -> Dict[str, Dict[str, Any]]:
+        """构建 metric 名到配置的映射，便于后续注入阈值和通过状态。"""
+        metric_configs: Dict[str, Dict[str, Any]] = {}
+        if not self.metrics_config or "dimensions" not in self.metrics_config:
+            return metric_configs
+
+        for dim_config in self.metrics_config["dimensions"].values():
+            for metric in dim_config.get("metrics", []):
+                metric_name = metric.get("name")
+                if metric_name:
+                    metric_configs[metric_name] = metric
+
+        return metric_configs
+
+    def _evaluate_dimension_and_metric_pass(
+        self,
+        dimensions: Dict[str, Dict[str, Any]],
+        raw_judge_pass: bool
+    ) -> Dict[str, Any]:
+        """
+        为大维度和子指标统一注入 pass/threshold，并返回失败项摘要。
+
+        公平可信优化:
+        - 所有带 YAML threshold 的指标统一判定，invert=True 时按“越小越好”处理；
+        - 大维度 pass 以子指标 pass 为准，避免“单项踩线但总维度还高分”的失真。
+        """
+        meta_keys = {"score", "reason", "details", "threshold", "pass", "score_range"}
+        metric_configs = self._build_metric_config_map()
+        failed_dimensions: List[str] = []
+        failed_metrics: List[str] = []
+
+        for dim_name, dim_data in dimensions.items():
+            if not isinstance(dim_data, dict):
+                continue
+
+            metric_passes: List[bool] = []
+
+            for sub_name, sub_data in dim_data.items():
+                if sub_name in meta_keys:
+                    continue
+                if not isinstance(sub_data, dict) or "score" not in sub_data:
+                    continue
+
+                metric_cfg = metric_configs.get(sub_name, {})
+                threshold = metric_cfg.get("threshold")
+                invert = metric_cfg.get("invert", False)
+                metric_pass = sub_data.get("pass")
+
+                if threshold is not None:
+                    normalized_score = self._normalize_score(sub_data.get("score"))
+                    metric_pass = normalized_score <= float(threshold) if invert else normalized_score >= float(threshold)
+                    sub_data["threshold"] = float(threshold)
+                    sub_data["pass"] = metric_pass
+                elif metric_pass is not None:
+                    metric_pass = bool(metric_pass)
+                    sub_data["pass"] = metric_pass
+
+                if metric_pass is None:
+                    continue
+
+                metric_passes.append(metric_pass)
+                if not metric_pass:
+                    failed_metrics.append(f"{dim_name}.{sub_name}")
+
+            if metric_passes:
+                dim_data["pass"] = all(metric_passes)
+            elif "pass" in dim_data:
+                dim_data["pass"] = bool(dim_data["pass"])
+            elif "score" in dim_data:
+                dim_data["pass"] = self._normalize_score(dim_data.get("score")) >= (75.0 if raw_judge_pass else 60.0)
+
+            if dim_data.get("pass") is False:
+                failed_dimensions.append(dim_name)
+
+        return {
+            "failed_dimensions": failed_dimensions,
+            "failed_metrics": failed_metrics,
+        }
+
+    def _compute_weighted_soft_score(
+        self,
+        dimensions: Dict[str, Dict[str, Any]],
+        dimension_weights: Optional[Dict[str, float]],
+        raw_overall_score: float
+    ) -> float:
+        """
+        软校验总分:
+        - 优先按大维度等权平均；
+        - 若维度缺失，回退到裁判原始 overall_score。
+        """
+        del dimension_weights
+        available = []
+        for dim_name, dim_data in dimensions.items():
+            if isinstance(dim_data, dict) and "score" in dim_data:
+                available.append((dim_name, self._normalize_score(dim_data.get("score"))))
+
+        if not available:
+            return raw_overall_score
+
+        return round(sum(score for _, score in available) / len(available), 2)
     
     def get_dimension_criteria(self, scene: Optional[str] = None) -> Dict[str, Dict[str, str]]:
         """
@@ -268,47 +443,40 @@ class MedicalEvaluator(Evaluator):
             human_transfer_data=human_transfer_data,
             grading_criteria=grading_criteria
         )
+        raw_judge_pass = bool(result.get("pass", True))
+        raw_overall_score = self._normalize_score(result.get("overall_score", 0))
+        result["judge_pass"] = raw_judge_pass
+        result["judge_overall_score"] = raw_overall_score
 
-        # 根据 YAML threshold 对各维度评分做通过/不通过判断
-        dim_thresholds = self._build_dimension_thresholds()
-        dimensions = result.get("dimensions", {})
-        failed_dims = []
+        dimensions = self._canonicalize_dimensions(result.get("dimensions", {}))
+        self._recalculate_dimension_scores(dimensions)
+        result["dimensions"] = dimensions
 
-        for dim_name, dim_data in dimensions.items():
-            if not isinstance(dim_data, dict):
-                continue
-            score = dim_data.get("score", 0)
-            threshold = dim_thresholds.get(dim_name)
-            if threshold is not None:
-                passed = score >= threshold
-                dim_data["threshold"] = threshold
-                dim_data["pass"] = passed
-                if not passed:
-                    failed_dims.append(dim_name)
-                    self.medical_logger.info(
-                        f"[{case_id}] 维度不达标: {dim_name} 得分={score}, 阈值={threshold}"
-                    )
+        pass_summary = self._evaluate_dimension_and_metric_pass(dimensions, raw_judge_pass)
+        failed_dimensions = pass_summary["failed_dimensions"]
+        failed_metrics = pass_summary["failed_metrics"]
 
-        # 任意维度不达标则整体不通过
-        if failed_dims:
-            result["pass"] = False
-            result["failed_dimensions"] = failed_dims
-            self.medical_logger.warning(
-                f"[{case_id}] 以下维度未达阈值: {failed_dims}"
-            )
+        soft_score = self._compute_weighted_soft_score(dimensions, integrated_weights, raw_overall_score)
+        result["raw_overall_score"] = soft_score
 
-        # 向子维度（metric 层）注入阈值和 pass 字段
-        metric_thresholds = self._build_metric_thresholds()
-        for dim_data in dimensions.values():
-            if not isinstance(dim_data, dict):
-                continue
-            for sub_name, sub_data in dim_data.items():
-                if isinstance(sub_data, dict) and "score" in sub_data:
-                    thresh = metric_thresholds.get(sub_name)
-                    if thresh is not None:
-                        sub_data["threshold"] = thresh
-                        sub_data["pass"] = sub_data["score"] >= thresh
+        soft_pass = (
+            raw_judge_pass
+            and not bool(result.get("safety_violation"))
+            and not failed_dimensions
+            and not failed_metrics
+        )
 
+        result["overall_score"] = soft_score
+        result["pass"] = soft_pass
+
+        if failed_dimensions:
+            result["failed_dimensions"] = failed_dimensions
+            self.medical_logger.warning(f"[{case_id}] 未通过的大维度: {failed_dimensions}")
+        if failed_metrics:
+            result["failed_metrics"] = failed_metrics
+            self.medical_logger.warning(f"[{case_id}] 未通过的子指标: {failed_metrics}")
+
+        result["grade"] = self._determine_grade(result["overall_score"])
         return result
 
     
@@ -446,52 +614,27 @@ class MedicalEvaluator(Evaluator):
     
     def calculate_medical_score(self, evaluation_result: Dict[str, Any], dimension_weights: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """计算医疗场景综合评分"""
+        del dimension_weights
         if not self.metrics_config:
             return evaluation_result
         
         dimensions = evaluation_result.get("dimensions", {})
-        
-        # 检查安全一票否决
-        safety_violation = evaluation_result.get("safety_violation", False)
-        if safety_violation:
-            # 安全违规，直接0分
-            evaluation_result.update({
-                "overall_score": 0,
-                "pass": False,
-                "safety_veto_applied": True,
-                "grade": "safety_violation"
-            })
-            return evaluation_result
-        
+
         # 如果已有综合评分，直接返回
         if evaluation_result.get("overall_score", 0) > 0:
             # 确保等级已设置
             if "grade" not in evaluation_result:
                 evaluation_result["grade"] = self._determine_grade(evaluation_result["overall_score"])
             return evaluation_result
-        
-        # 使用传入的权重或配置中的权重计算综合评分
-        if dimension_weights is None:
-            if self.metrics_config and "overall_score" in self.metrics_config:
-                dimension_weights = self.metrics_config["overall_score"].get("dimension_weights", {})
-            else:
-                dimension_weights = {}
-        
-        total_score = 0
-        total_weight = 0
-        
+
+        available_scores = []
         for dim_name, dim_data in dimensions.items():
-            weight = dimension_weights.get(dim_name, 0.25)  # 默认权重0.25
-            score = dim_data.get("score", 0)
-            
-            total_score += score * weight
-            total_weight += weight
-        
-        if total_weight > 0:
-            overall_score = round(total_score / total_weight, 1)
+            if isinstance(dim_data, dict) and "score" in dim_data:
+                available_scores.append(self._normalize_score(dim_data.get("score")))
+
+        if available_scores:
+            overall_score = round(sum(available_scores) / len(available_scores), 1)
             evaluation_result["overall_score"] = overall_score
-            
-            # 确定等级
             evaluation_result["grade"] = self._determine_grade(overall_score)
         
         return evaluation_result

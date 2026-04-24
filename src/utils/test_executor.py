@@ -83,8 +83,14 @@ class TestExecutor:
         if hasattr(self.evaluator, 'llm_evaluate') and response.get("answer"):
             if self._should_run_llm_eval(case, validation_result):
                 try:
-                    llm_evaluation_result = self._perform_llm_evaluation(case, response)
-                    self.logger.info(f"[{case.case_id}] LLM评估完成: score={llm_evaluation_result.get('overall_score', 0)}")
+                    # 执行多次 LLM 评估，对同一个响应取均值以减少随机性
+                    eval_config = case.ground_truth.get("llm_eval_config", {})
+                    num_evaluations = eval_config.get("num_evaluations", 3)
+                    llm_evaluation_result = self._perform_llm_evaluation_with_retry(case, response, num_evaluations)
+                    self.logger.info(
+                        f"[{case.case_id}] LLM 评估完成：score={llm_evaluation_result.get('overall_score', 0)}, "
+                        f"evaluations={llm_evaluation_result.get('evaluation_count', 1)}"
+                    )
                 except Exception as e:
                     self.logger.error(f"[{case.case_id}] LLM评估失败: {str(e)}")
         
@@ -113,10 +119,25 @@ class TestExecutor:
             "metrics": metrics,  # 新增:评估指标
             "llm_evaluation": llm_evaluation_result
         }
+
+        result["scoring"] = self._calculate_scoring(
+            validation_result,
+            llm_evaluation_result,
+            case.min_score_threshold
+        )
         
-        # 如果LLM评估失败，不影响整体成功状态，但记录在结果中
-        if llm_evaluation_result and not llm_evaluation_result.get("pass", True):
-            self.logger.warning(f"[{case.case_id}] LLM评估未通过: {llm_evaluation_result.get('overall_reason', '')}")
+        # 记录软校验口径差异，便于后续排查 judge 布尔值与分数不一致的问题
+        if result["scoring"].get("soft_evaluated"):
+            if not result["scoring"].get("soft_pass", False):
+                self.logger.warning(
+                    f"[{case.case_id}] 软校验未通过: "
+                    f"soft_score={result['scoring'].get('soft_score')} < "
+                    f"threshold={case.min_score_threshold}"
+                )
+            elif result["scoring"].get("judge_soft_pass") is False:
+                self.logger.info(
+                    f"[{case.case_id}] 软校验按阈值通过，但 judge_pass=False，已按分数阈值口径记为通过"
+                )
         
         return result
 
@@ -157,6 +178,13 @@ class TestExecutor:
         # 处理聊天历史 - 转为JSON字符串
         if case.chat_history:
             inputs["messages"] = json.dumps(case.chat_history, ensure_ascii=False)
+        elif isinstance(inputs.get("messages"), str) and inputs["messages"].strip() in {
+            "history_json_str",
+            "{{history_json_str}}",
+        }:
+            # todo 数据里部分行仍保留历史消息占位符；若无真实 Chat_History，
+            # 统一降级为空历史，避免把占位符原样透传给 Dify。
+            inputs["messages"] = "[]"
         # if case.materialInfo:
         #     inputs["materialInfo"] = json.dumps(case.materialInfo, ensure_ascii=False)
 
@@ -539,6 +567,98 @@ class TestExecutor:
         #         )
         
         return result
+
+    def _calculate_hard_score(self, validation: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        计算硬校验分。
+
+        公平可信优化:
+        - 采用“通过检查项 / 已执行检查项”的透明比例分；
+        - 只要硬校验整体失败，硬分上限封顶 59，避免阻断型失败仍显示高分。
+        """
+        checks = validation.get("checks", []) or []
+        total_checks = len(checks)
+        passed_checks = sum(1 for check in checks if check.get("passed", False))
+        failed_checks = total_checks - passed_checks
+
+        if total_checks <= 0:
+            raw_score = 0.0
+        else:
+            raw_score = round((passed_checks / total_checks) * 100, 2)
+
+        hard_pass = bool(validation.get("passed", False))
+        final_score = raw_score if hard_pass else min(raw_score, 59.0)
+
+        return {
+            "hard_pass": hard_pass,
+            "hard_score_raw": raw_score,
+            "hard_score": round(final_score, 2),
+            "total_checks": total_checks,
+            "passed_checks": passed_checks,
+            "failed_checks": failed_checks,
+        }
+
+    def _calculate_scoring(
+        self,
+        validation: Dict[str, Any],
+        llm_evaluation: Optional[Dict[str, Any]],
+        min_score_threshold: float = 75
+    ) -> Dict[str, Any]:
+        """
+        统一计算硬分、软分和最终综合分。
+
+        规则:
+        - 有软评分时，硬分/软分各占 50%;
+        - 无软评分时，最终分直接取硬分；
+        - 软校验是否通过，按软分是否达到该用例阈值判断；
+        - 最终是否通过，需要硬校验通过，且软评分存在时软校验也通过。
+        """
+        hard_summary = self._calculate_hard_score(validation)
+        hard_score = hard_summary["hard_score"]
+        hard_pass = hard_summary["hard_pass"]
+
+        soft_evaluated = llm_evaluation is not None
+        soft_score = None
+        soft_pass = None
+        judge_soft_pass = None
+        soft_reason = ""
+
+        if soft_evaluated:
+            soft_score = round(float(llm_evaluation.get("overall_score", 0) or 0), 2)
+            judge_soft_pass = bool(llm_evaluation.get("pass", False))
+            soft_pass = soft_score >= float(min_score_threshold)
+            soft_reason = llm_evaluation.get("overall_reason", "")
+
+        if soft_score is not None:
+            overall_score = round((hard_score + soft_score) / 2, 2)
+        else:
+            overall_score = hard_score
+
+        overall_pass = hard_pass and (soft_pass if soft_evaluated else True)
+
+        if soft_evaluated:
+            overall_reason = (
+                f"硬校验得分 {hard_score}/100，软校验得分 {soft_score}/100，"
+                f"按 50% : 50% 合成最终得分 {overall_score}/100。"
+            )
+            if soft_reason:
+                overall_reason += f" 软校验结论：{soft_reason}"
+        else:
+            overall_reason = (
+                f"未执行软校验，最终得分沿用硬校验得分 {overall_score}/100。"
+            )
+
+        return {
+            **hard_summary,
+            "soft_evaluated": soft_evaluated,
+            "soft_score": soft_score,
+            "soft_pass": soft_pass,
+            "judge_soft_pass": judge_soft_pass,
+            "min_score_threshold": float(min_score_threshold),
+            "overall_score": overall_score,
+            "overall_pass": overall_pass,
+            "overall_reason": overall_reason,
+        }
     
     def _calculate_metrics(
         self,
@@ -632,23 +752,23 @@ class TestExecutor:
         eval_inputs = case.get_enhanced_evaluation_inputs()
         
         # 提取转人工相关参数（如果存在）
-        human_transfer_data = None
-        json_data = response.get("json_data")
-        if isinstance(json_data, dict):
-            need_human = json_data.get("needHuman")
-            human_reason = json_data.get("humanReason")
-            message_list = json_data.get("messageList")
-            # 只要有任意一个字段存在，就构造 human_transfer_data
-            if need_human is not None or human_reason is not None or message_list is not None:
-                human_transfer_data = {
-                    "needHuman": need_human,
-                    "humanReason": human_reason,
-                    "messageList": message_list or []
-                }
-                self.logger.info(
-                    f"[{case.case_id}] 检测到转人工参数: needHuman={need_human}, "
-                    f"humanReason={human_reason}"
-                )
+        # human_transfer_data = None
+        # json_data = response.get("json_data")
+        # if isinstance(json_data, dict):
+        #     need_human = json_data.get("needHuman")
+        #     human_reason = json_data.get("humanReason")
+        #     message_list = json_data.get("messageList")
+        #     # 只要有任意一个字段存在，就构造 human_transfer_data
+        #     if need_human is not None or human_reason is not None or message_list is not None:
+        #         human_transfer_data = {
+        #             "needHuman": need_human,
+        #             "humanReason": human_reason,
+        #             "messageList": message_list or []
+        #         }
+        #         self.logger.info(
+        #             f"[{case.case_id}] 检测到转人工参数: needHuman={need_human}, "
+        #             f"humanReason={human_reason}"
+        #         )
 
         # 提取软校验预期，以无感拼接到 expected_output 传给 Dify Agent
         soft_rules = case.ground_truth.get("soft_rules", {})
@@ -674,7 +794,7 @@ class TestExecutor:
             "context_inputs": case.dynamic_inputs,
             "eval_dimensions": eval_inputs.get("eval_dimensions", []),
             "dimension_criteria": eval_inputs.get("dimension_criteria", {}),
-            "human_transfer_data": human_transfer_data
+            # "human_transfer_data": human_transfer_data
         }
         
         # 如果有测试用例特定的评估指标，添加到评估参数中
@@ -692,6 +812,155 @@ class TestExecutor:
         else:
             # 使用基础评估器
             return self.evaluator.llm_evaluate(**eval_params)
+
+    def _perform_llm_evaluation_with_retry(
+        self,
+        case: UnifiedTestCase,
+        response: Dict[str, Any],
+        num_evaluations: int = 3
+    ) -> Dict[str, Any]:
+        """
+        执行多次 LLM 评估，对同一个响应取均值以减少随机性
+
+        Args:
+            case: 测试用例
+            response: API 响应（同一个响应）
+            num_evaluations: 评估次数，默认 3 次
+
+        Returns:
+            多次评估的平均结果，包含 evaluation_count 字段
+        """
+        self.logger.info(f"[{case.case_id}] 开始执行 {num_evaluations} 次 LLM 评估（对同一响应）")
+
+        all_scores = []
+        all_dimensions = []
+        all_pass_results = []
+        all_reasons = []
+        all_suggestions = []
+        all_individual_evaluations = []  # 保存每次评估的完整数据
+        valid_count = 0
+
+        for i in range(num_evaluations):
+            try:
+                self.logger.debug(f"[{case.case_id}] 执行第 {i+1}/{num_evaluations} 次评估")
+                result = self._perform_llm_evaluation(case, response)
+
+                # 收集有效结果
+                score = result.get('overall_score', 0)
+                dimensions = result.get('dimensions', {})
+                suggestions = result.get('suggestions', [])
+                pass_result = result.get('pass', False)
+                reason = result.get('overall_reason', '')
+
+                all_scores.append(score)
+                all_dimensions.append(dimensions)
+                all_pass_results.append(pass_result)
+                all_reasons.append(reason)
+                all_suggestions.append(suggestions)
+
+                # 保存每次评估的完整数据（用于详细展示）
+                all_individual_evaluations.append({
+                    "evaluation_index": i + 1,
+                    "overall_score": score,
+                    "overall_reason": reason,
+                    "pass": pass_result,
+                    "dimensions": dimensions,
+                    "suggestions": suggestions
+                })
+
+                valid_count += 1
+
+                self.logger.debug(
+                    f"[{case.case_id}] 第 {i+1} 次评估完成：score={score}, "
+                    f"pass={pass_result}"
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"[{case.case_id}] 第 {i+1} 次评估失败：{str(e)}，继续下一次"
+                )
+
+        if valid_count == 0:
+            # 所有评估都失败，返回失败结果
+            self.logger.error(f"[{case.case_id}] 所有 {num_evaluations} 次评估均失败")
+            return {
+                "pass": False,
+                "overall_score": 0,
+                "overall_reason": f"所有 {num_evaluations} 次评估均失败",
+                "dimensions": {},
+                "evaluation_count": 0
+            }
+
+        # 计算平均分
+        avg_score = round(sum(all_scores) / valid_count, 2)
+
+        # 合并维度评分（对每个维度取平均）
+        merged_dimensions = {}
+        if all_dimensions:
+            # 收集所有维度名称
+            all_dim_names = set()
+            for dim_dict in all_dimensions:
+                all_dim_names.update(dim_dict.keys())
+
+            # 对每个维度计算平均分
+            for dim_name in all_dim_names:
+                dim_scores = []
+                dim_reasons = []
+                for dim_dict in all_dimensions:
+                    if dim_name in dim_dict:
+                        dim_data = dim_dict[dim_name]
+                        if isinstance(dim_data, dict):
+                            if 'score' in dim_data:
+                                dim_scores.append(dim_data['score'])
+                            if 'reason' in dim_data:
+                                dim_reasons.append(dim_data['reason'])
+
+                if dim_scores:
+                    avg_dim_score = round(sum(dim_scores) / len(dim_scores), 2)
+                    # 取第一个非空理由作为代表
+                    representative_reason = next((r for r in dim_reasons if r), "")
+                    # 判断维度是否通过：所有评估中该维度都 >= 60 分才算通过
+                    dim_passed = all(s >= 60 for s in dim_scores)
+                    merged_dimensions[dim_name] = {
+                        "score": avg_dim_score,
+                        "reason": representative_reason,
+                        "pass": dim_passed,
+                        "score_range": f"{min(dim_scores)}-{max(dim_scores)}" if len(dim_scores) > 1 else None
+                    }
+
+        # 判断是否通过：所有评估均通过才算通过
+        overall_pass = all(all_pass_results)
+
+        # 合并所有理由
+        merged_reason = (
+            f"基于 {valid_count} 次评估的平均结果。"
+            f"各次评分：{all_scores}。"
+            f"平均分：{avg_score}。"
+            f"{' '.join(all_reasons[:2])}"  # 取前两次的理由作为参考
+        )
+
+        # 合并建议（去重）
+        merged_suggestions = []
+        for suggestions_list in all_suggestions:
+            if suggestions_list:
+                for suggestion in suggestions_list:
+                    if suggestion and suggestion not in merged_suggestions:
+                        merged_suggestions.append(suggestion)
+
+        self.logger.info(
+            f"[{case.case_id}] 多次评估完成：valid={valid_count}/{num_evaluations}, "
+            f"scores={all_scores}, avg_score={avg_score}"
+        )
+
+        return {
+            "pass": overall_pass,
+            "overall_score": avg_score,
+            "overall_reason": merged_reason,
+            "dimensions": merged_dimensions,
+            "suggestions": merged_suggestions,
+            "evaluation_count": valid_count,
+            "individual_scores": all_scores,  # 保留各次评分用于调试
+            "individual_evaluations": all_individual_evaluations  # 保存每次评估的完整数据
+        }
     
     def _calculate_error_metrics(self, duration: float) -> Dict[str, Any]:
         """计算错误情况下的指标"""
@@ -710,4 +979,3 @@ class TestExecutor:
             "human_transfer_correct": False,
             "has_structured_output": False
         }
-

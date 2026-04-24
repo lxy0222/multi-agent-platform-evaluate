@@ -53,3 +53,48 @@ python run_test.py \
 会不会忘了调接口/查错数据？ ➡️ P1_Tool
 
 会不会显得像个冷冰冰的智障机器人？ ➡️ P2_EQ/Context
+
+
+
+
+按现在项目里的逻辑，`N` 条用例时这些指标都是先对“参与本次对比的 case 子集”做汇总，再出表，不是拿全量 baseline summary 直接套。核心代码在 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L245](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L245) 到 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L263](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L263)。
+
+先说单条 case 怎么来：
+
+- 硬分：`通过检查项数 / 已执行检查项数 * 100`，如果硬校验整体失败，硬分上限封顶 `59`，见 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L551](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L551) 到 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L579](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L579)。
+- 软分：`llm_evaluation.overall_score`
+- 总分：如果有软分，`(硬分 + 软分) / 2`；没有软分，就直接用硬分，见 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L581](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L581) 到 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L613](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/test_executor.py#L613)。
+- 综合是否通过：`hard_pass and soft_pass`；如果没有软评，就只看硬校验。
+
+再说 `N` 条用例时表里的汇总怎么算，代码在 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L418](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L418) 到 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L482](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L482)：
+
+- `综合通过率 = overall_pass == true 的用例数 / N`
+- `硬校验通过率 = validation_passed == true 的用例数 / N`
+- `软校验通过率 = llm_evaluation.pass == true 的用例数 / 实际执行软评的用例数`
+- `综合评分 = 所有 case 的 overall_score 平均值`
+- `平均硬校验分 = 所有 case 的 hard_score 平均值`
+- `平均软校验分 = 只对 soft_score 不为空的 case 取平均`
+- `最高分 = max(overall_score)`
+- `最低分 = min(overall_score)`
+- `平均平台总耗时 = avg(total_duration_ms 或 duration_ms)`
+- `平均 Agent 响应时间 = avg(response_time_ms)`
+
+维度分也是先逐 case 取维度，再做平均，代码在 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L496](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L496) 到 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L542](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/baseline_manager.py#L542)：
+
+- 每个 case 优先取顶层 `dimensions`
+- 没有就取 `llm_evaluation.dimensions`
+- 同名维度 across `N` 条 case 求平均
+- 像 `medical_capability / service_capability / safety_capability` 这种大维度，也是在聚合后再写进 `avg_dimensions`
+
+最后表里的“变化量”和“变化率”：
+
+- `变化量 = current - baseline`
+- `变化率 = (current - baseline) / baseline * 100`
+- 如果 baseline 是 `0`，变化率直接显示 `0`
+- 趋势判断里，绝对变化 `< 3` 就显示“持平”，见 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/comparison_reporter.py#L218](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/comparison_reporter.py#L218) 到 [/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/comparison_reporter.py#L236](/Users/lxy/PyCharmMiscProject/multi-agent-platform-evaluate/src/utils/comparison_reporter.py#L236)
+
+
+
+
+# 清除pytest缓存
+rm -rf .pytest_cache/d/baseline_worker_data

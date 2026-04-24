@@ -2,7 +2,8 @@
 
 # ================= 全局默认配置 =================
 defaults:
-  dify_base_url: "http://121.43.154.99/v1" # Dify 私有部署的默认地址
+#  dify_base_url: "http://121.43.154.99/v1" # Dify 私有部署的默认地址
+  dify_base_url: "http://8.154.28.99/v1"
 
 # ================= 日志配置 =================
 logging:
@@ -23,6 +24,11 @@ logging:
 
 # ================= 智能体列表 =================
 agents:
+  xiaofang:
+    platform: "dify"                        # 【必填】用于识别平台
+    api_key: "app-skt8y7ghIb7WUtL62gQOhu0D"
+    mode: "chat"
+
   # --- 场景1: Dify 上的初诊 (Chat类型) ---
   first_visit:
     platform: "dify"                        # 【必填】用于识别平台
@@ -106,6 +112,11 @@ runner:
 
   # 重复执行
   repeat: 1
+  # 【新增】LLM 评估配置
+  llm_eval_config:
+    # 对同一个 AI 响应进行多次 LLM 评估的次数，取平均值以减少随机性
+    num_evaluations: 3
+
 
   # 失败重试次数 (依赖 pytest-rerunfailures)
   # 针对 Dify/LLM 网络波动，建议设置 1-2 次
@@ -127,13 +138,14 @@ test_data:
   # 要加载的测试文件列表
   files:
 #     - "xiaofang_fz_chat.csv"
-     - "xiaofang_cz_chat.csv"
+#     - "xiaofang_cz_chat.csv"
+     - "xiaofang_new_chat.csv"
 #     - "patient_summary_chat.csv"
 #     - "xiaofang_fz_todo.csv"
   
   # 过滤条件（可选）
   filter:
-     case_ids: ["CZ_CASE_06",]  # 只执行指定用例
+     case_ids: ["CZ_CASE_01"]  # 只执行指定用例
     # target_agents: ["follow_up"]      # 只执行指定智能体
     # tags: ["Reply"]                   # 包含指定标签
     # enabled: true                     # 只执行启用的用例

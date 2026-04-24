@@ -34,6 +34,7 @@ class CaseLoader:
         self.supported_formats = {
             "golden_dataset": self._parse_golden_dataset,
             "xiaofang_fz_cases": self._parse_xiaofang_fz_cases,
+            "xiaofang_fz_todo": self._parse_xiaofang_fz_cases,
             "exports": self._parse_exports_format,
             "default": self._parse_default_format
         }
@@ -122,7 +123,7 @@ class CaseLoader:
         # 根据列名识别
         if raw_cases:
             columns = set(raw_cases[0].keys())
-            if "Order_Detail" in columns and "Chat_History" in columns:
+            if "Order_Detail" in columns and "Dynamic_Inputs" in columns:
                 return self._parse_xiaofang_fz_cases
             elif "Case_ID" in columns and "Dynamic_Inputs" in columns:
                 return self._parse_golden_dataset
@@ -280,7 +281,7 @@ class CaseLoader:
         return unified_cases
 
     def _parse_xiaofang_fz_cases(self, raw_cases: List[Dict]) -> List[UnifiedTestCase]:
-        """解析 xiaofang_fz_todo.csv 格式（包含 Order_Detail 和 Chat_History）"""
+        """解析 xiaofang_fz_todo.csv 格式（Order_Detail 必填，Chat_History 可选）"""
         from src.utils.dynamic_renderer import renderer
 
         unified_cases = []
@@ -302,6 +303,9 @@ class CaseLoader:
                     try:
                         rendered = renderer.render(row["Order_Detail"])
                         order_detail = json.loads(rendered)
+                        # todo 工作流要求将订单详情一并注入 Dynamic_Inputs。
+                        if "orderDetail" not in dynamic_inputs:
+                            dynamic_inputs["orderDetail"] = json.dumps(order_detail, ensure_ascii=False)
                     except Exception as e:
                         print(f"⚠️ 用例 {row.get('Case_ID')} 的 Order_Detail 解析失败: {e}")
 

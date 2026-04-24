@@ -134,6 +134,7 @@ class TestUnifiedFramework:
         # ==========================================
         with allure.step("步骤3: 校验结果 (Hard Checks)"):
             validation = result["validation"]
+            scoring = result.get("scoring", {})
             
             # 构造直白、清晰的纯文本结构报表
             check_summary = ["【🛡️ 结构与业务硬校验检查点】\n"]
@@ -172,12 +173,45 @@ class TestUnifiedFramework:
             # 断言 (Fail Fast)
             if not result["success"]:
                 error_msg = "\n".join(validation["errors"])
-                test_logger.error(f"[{case.case_id}] 测试失败: {error_msg}")
+                test_logger.error(f"[{case.case_id}] 测试失败：{error_msg}")
                 allure.attach(
                     error_msg,
                     name="失败原因",
                     attachment_type=allure.attachment_type.TEXT
                 )
+
+                # 关键修复：在 pytest.fail 之前先收集结果，确保硬校验失败的 case 也能被保存到 baseline
+                test_result_data = {
+                    "case_id": case.case_id,
+                    "target_agent": case.target_agent,
+                    "scene_description": case.scene_description,
+                    "validation_passed": False,
+                    "validation": result.get("validation", {}),  # 包含 checks 列表
+                    "hard_score": scoring.get("hard_score", 0),
+                    "soft_score": scoring.get("soft_score"),
+                    "soft_evaluated": scoring.get("soft_evaluated", False),
+                    "soft_pass": scoring.get("soft_pass"),
+                    "judge_soft_pass": scoring.get("judge_soft_pass"),
+                    "min_score_threshold": case.min_score_threshold,
+                    "overall_score": scoring.get("overall_score", 0),
+                    "overall_reason": scoring.get("overall_reason", f"硬校验失败：{error_msg}"),
+                    "overall_pass": False,
+                    "llm_evaluation": {},
+                    "dimensions": {},
+                    "suggestions": [],
+                    "metrics": result.get("metrics", {}),
+                    "duration_ms": result.get("metrics", {}).get("total_duration_ms", 0),
+                    "response_time_ms": result.get("metrics", {}).get("response_time_ms", 0),
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "hard_validation_failed": True,
+                    "failure_reason": error_msg
+                }
+
+                # 保存到全局收集器
+                if case.case_id not in results_collector:
+                    results_collector[case.case_id] = []
+                results_collector[case.case_id].append(test_result_data)
+
                 pytest.fail(f"用例硬强验失败 (Fail Fast):\n{error_msg}")
             else:
                 test_logger.info(f"[{case.case_id}] 硬规则校验通过")
@@ -190,6 +224,7 @@ class TestUnifiedFramework:
         # 步骤4: LLM 智能评估
         # ==========================================
         with allure.step("步骤4: LLM 智能评估 (Evaluator Agent)"):
+            scoring = result.get("scoring", {})
             
             # 安全获取 eval_data
             eval_data = result.get('llm_evaluation') or {}
@@ -203,6 +238,8 @@ class TestUnifiedFramework:
                 # ---------------------
                 pass_status = bool(eval_data.get('pass', eval_data.get('overall_pass', False)))
                 score = eval_data.get('overall_score', 0)
+                hard_score = scoring.get("hard_score", 0)
+                final_score = scoring.get("overall_score", score)
                 pass_icon = '✅' if pass_status else '❌'
                 
                 # HTML 样式预设
@@ -226,7 +263,9 @@ class TestUnifiedFramework:
                 # 最终判决
                 overall_class = "passed" if pass_status else "failed"
                 html_report.append("<h2>⚖️ 最终判决</h2>")
-                html_report.append(f"<p><b>综合得分:</b> <span class='score-badge {overall_class}'>{score}/100</span> {pass_icon}</p>")
+                html_report.append(f"<p><b>软校验得分:</b> <span class='score-badge {overall_class}'>{score}/100</span> {pass_icon}</p>")
+                html_report.append(f"<p><b>硬校验得分:</b> {hard_score}/100</p>")
+                html_report.append(f"<p><b>最终综合得分:</b> <b>{final_score}/100</b>（硬/软各 50%）</p>")
                 html_report.append(f"<p><b>判决理由:</b> {eval_data.get('overall_reason', '无')}</p>")
                 
                 # 医疗合规
@@ -241,11 +280,21 @@ class TestUnifiedFramework:
                 
                 # 维度打分明细
                 dimensions = eval_data.get('dimensions', {})
+                eval_count = eval_data.get('evaluation_count', 1)
+                individual_scores = eval_data.get('individual_scores', [])
+                individual_evaluations = eval_data.get('individual_evaluations', [])
+                suggestions = eval_data.get('suggestions', [])
+
                 if dimensions:
                     html_report.append("<h2>📊 维度打分明细</h2>")
+
+                    # 如果有多次评估，显示评估统计信息
+                    if eval_count > 1:
+                        html_report.append(f"<p style='color: #666; font-size: 0.9em;'>ℹ️ 基于 <b>{eval_count}</b> 次独立评估的平均结果，减少 LLM 裁判随机性</p>")
+
                     html_report.append("<table>")
-                    html_report.append("<tr><th width='25%'>考察维度</th><th width='12%'>得分</th><th width='8%'>状态</th><th>详细判决理由</th></tr>")
-                    
+                    html_report.append("<tr><th width='25%'>考察维度</th><th width='15%'>得分</th><th width='8%'>状态</th><th>详细判决理由</th></tr>")
+
                     for dim_name, dim_data in dimensions.items():
                         if not isinstance(dim_data, dict):
                             continue
@@ -254,14 +303,20 @@ class TestUnifiedFramework:
                         d_reason = dim_data.get('reason', '-').replace('\n', '<br>')
                         d_icon = '✅' if d_pass else '❌'
                         css_class = 'passed' if d_pass else 'failed'
-                        
+                        score_range = dim_data.get('score_range')
+
+                        # 分数显示：如果有波动范围，显示出来
+                        score_display = f"{d_score}/100"
+                        if score_range and eval_count > 1:
+                            score_display += f"<br><span style='font-size:0.8em;color:#888;'>波动：{score_range}</span>"
+
                         html_report.append(f"<tr class='dim-row'>")
                         html_report.append(f"<td>{dim_name}</td>")
-                        html_report.append(f"<td><span class='score-badge {css_class}'>{d_score}/100</span></td>")
+                        html_report.append(f"<td><span class='score-badge {css_class}'>{score_display}</span></td>")
                         html_report.append(f"<td style='text-align:center;'>{d_icon}</td>")
                         html_report.append(f"<td style='font-size: 0.95em; color: #444;'>{d_reason}</td>")
                         html_report.append(f"</tr>")
-                        
+
                         # 子维度层级 (如果存在深度嵌套)
                         for sub_k, sub_v in dim_data.items():
                             if isinstance(sub_v, dict) and 'score' in sub_v:
@@ -270,15 +325,90 @@ class TestUnifiedFramework:
                                 s_icon = '✅' if s_pass else '❌'
                                 s_css_class = 'passed' if s_pass else 'failed'
                                 s_reason = sub_v.get('reason', '-').replace('\n', '<br>')
-                                
+
                                 html_report.append(f"<tr>")
                                 html_report.append(f"<td>&nbsp;&nbsp;&nbsp;↳ {sub_k}</td>")
                                 html_report.append(f"<td><span class='score-badge {s_css_class}'>{s_score}/100</span></td>")
                                 html_report.append(f"<td style='text-align:center;'>{s_icon}</td>")
                                 html_report.append(f"<td style='font-size: 0.9em; color: #555;'>{s_reason}</td>")
                                 html_report.append(f"</tr>")
-                    
+
                     html_report.append("</table>")
+
+                    # 如果有多次评估，显示各次评估的详细结果（包含子维度）
+                    if individual_evaluations and len(individual_evaluations) > 1:
+                        html_report.append("<h2 style='margin-top: 25px;'>🔍 各次评估详情</h2>")
+
+                        for eval_item in individual_evaluations:
+                            eval_idx = eval_item.get('evaluation_index', 0)
+                            eval_score = eval_item.get('overall_score', 0)
+                            eval_reason = eval_item.get('overall_reason', '')
+                            eval_dims = eval_item.get('dimensions', {})
+                            eval_suggestions = eval_item.get('suggestions', [])
+
+                            html_report.append(f"<details style='margin: 10px 0; border: 1px solid #e0e0e0; border-radius: 5px;'>")
+                            html_report.append(f"<summary style='cursor: pointer; padding: 10px; background: #f8f9fa; font-weight: bold;'>第 {eval_idx} 次评估：<span class='score-badge {'passed' if eval_score >= 60 else 'failed'}'>{eval_score}/100</span></summary>")
+                            html_report.append("<div style='padding: 15px;'>")
+
+                            # 整体理由
+                            html_report.append(f"<p style='margin: 10px 0;'><b>评估理由:</b> {eval_reason}</p>")
+
+                            # 子维度详情
+                            if eval_dims:
+                                html_report.append("<h3 style='font-size: 1.1em; color: #555; margin-top: 15px;'>各维度评分详情</h3>")
+                                html_report.append("<table style='font-size: 0.95em;'>")
+                                html_report.append("<tr><th width='25%'>维度</th><th width='12%'>得分</th><th>理由</th></tr>")
+
+                                for dim_name, dim_data in eval_dims.items():
+                                    if not isinstance(dim_data, dict):
+                                        continue
+                                    dim_score = dim_data.get('score', 0)
+                                    dim_pass = dim_data.get('pass', True)
+                                    dim_reason = dim_data.get('reason', '-').replace('\n', '<br>')
+                                    dim_icon = '✅' if dim_pass else '❌'
+                                    dim_css = 'passed' if dim_pass else 'failed'
+
+                                    html_report.append(f"<tr>")
+                                    html_report.append(f"<td>{dim_name}</td>")
+                                    html_report.append(f"<td><span class='score-badge {dim_css}'>{dim_score}/100</span> {dim_icon}</td>")
+                                    html_report.append(f"<td style='font-size: 0.9em; color: #666;'>{dim_reason}</td>")
+                                    html_report.append(f"</tr>")
+
+                                    # 子维度
+                                    for sub_k, sub_v in dim_data.items():
+                                        if isinstance(sub_v, dict) and 'score' in sub_v:
+                                            sub_score = sub_v.get('score', 0)
+                                            sub_pass = sub_v.get('pass', True)
+                                            sub_reason = sub_v.get('reason', '-').replace('\n', '<br>')
+                                            sub_icon = '✅' if sub_pass else '❌'
+                                            sub_css = 'passed' if sub_pass else 'failed'
+
+                                            html_report.append(f"<tr style='background: #f9f9f9;'>")
+                                            html_report.append(f"<td>&nbsp;&nbsp;&nbsp;↳ {sub_k}</td>")
+                                            html_report.append(f"<td><span class='score-badge {sub_css}'>{sub_score}/100</span> {sub_icon}</td>")
+                                            html_report.append(f"<td style='font-size: 0.85em; color: #777;'>{sub_reason}</td>")
+                                            html_report.append(f"</tr>")
+
+                                html_report.append("</table>")
+
+                            # 改进建议
+                            if eval_suggestions:
+                                html_report.append("<h3 style='font-size: 1.1em; color: #555; margin-top: 15px;'>改进建议</h3>")
+                                html_report.append("<ul>")
+                                for suggestion in eval_suggestions:
+                                    html_report.append(f"<li style='color: #666;'>{suggestion}</li>")
+                                html_report.append("</ul>")
+
+                            html_report.append("</div>")
+                            html_report.append("</details>")
+
+                    # 改进建议（汇总）
+                    if suggestions:
+                        html_report.append("<h2 style='margin-top: 25px;'>💡 改进建议</h2>")
+                        html_report.append("<ul>")
+                        for suggestion in suggestions:
+                            html_report.append(f"<li style='color: #666;'>{suggestion}</li>")
+                        html_report.append("</ul>")
                 
                 # 改进建议
                 suggestions = eval_data.get('suggestions', [])
@@ -319,20 +449,40 @@ class TestUnifiedFramework:
             
             # 安全提取基础字段并赋默认值，防止未评估时变量未定义
             eval_dict = eval_data or {}
-            overall_score = eval_dict.get("overall_score", 0)
-            overall_reason = eval_dict.get("overall_reason", "无评分(用例跳过大模型评估)")
+            soft_score = eval_dict.get("overall_score", 0)
+            overall_score = scoring.get("overall_score", soft_score)
+            overall_reason = scoring.get("overall_reason", "无评分(用例跳过大模型评估)")
             dimensions = eval_dict.get("dimensions", {})
             pass_status = bool(eval_dict.get("pass", eval_dict.get("overall_pass", False)))
+            hard_score = scoring.get("hard_score", 0)
+            soft_evaluated = scoring.get("soft_evaluated", False)
 
             if eval_data:
                 allure.dynamic.parameter("LLM评估结论", "✅ 通过" if pass_status else "❌ 未通过")
-                allure.dynamic.parameter("Overall Score", overall_score)
+                allure.dynamic.parameter("Soft Score", soft_score)
             else:
                 allure.dynamic.parameter("LLM评估结论", "⏭️ 已跳过")
-                allure.dynamic.parameter("Overall Score", "N/A")
+                allure.dynamic.parameter("Soft Score", "N/A")
+
+            allure.dynamic.parameter("Hard Score", hard_score)
+            allure.dynamic.parameter("Overall Score", overall_score)
             
             response_time_ms = result.get("metrics", {}).get("response_time_ms", 0)
             allure.dynamic.parameter("Agent响应时间(ms)", response_time_ms)
+
+            score_summary = [
+                "【最终评分汇总】",
+                f"硬校验得分: {hard_score}/100",
+                f"软校验得分: {soft_score}/100" if soft_evaluated else "软校验得分: 已跳过",
+                f"最终综合得分: {overall_score}/100",
+                f"最终综合结论: {'✅ 通过' if scoring.get('overall_pass', False) else '❌ 未通过'}",
+                f"说明: {overall_reason}"
+            ]
+            allure.attach(
+                "\n".join(score_summary),
+                name="📌 最终综合评分",
+                attachment_type=allure.attachment_type.TEXT
+            )
             
             # 如果配置了子维度，在侧边栏挂载子维度的分数
             for dim_name, dim_data in dimensions.items():
@@ -354,17 +504,29 @@ class TestUnifiedFramework:
         # 记录性能指标
         case_logger.log_metrics(result.get("metrics", {}))
         
+        # 获取 LLM 评估结果（可能为 None）
+        llm_eval = result.get('llm_evaluation') or {}
+        scoring = result.get("scoring", {})
+
         # 构造完整的测试结果数据
         test_result_data = {
             "case_id": case.case_id,
             "target_agent": case.target_agent,
             "scene_description": case.scene_description,
             "validation_passed": result["success"],
-            "overall_score": overall_score,
-            "overall_reason": overall_reason,
-            "overall_pass": (result.get('llm_evaluation') or {}).get("pass", False),
-            "dimensions": dimensions,  # 新增：各维度详细评分
-            "suggestions": (result.get('llm_evaluation') or {}).get("suggestions", []),  # 新增：改进建议
+            "validation": result.get("validation", {}),  # 完整的校验结果，包含 checks 列表
+            "hard_score": scoring.get("hard_score", 0),
+            "soft_score": scoring.get("soft_score"),
+            "soft_evaluated": scoring.get("soft_evaluated", False),
+            "soft_pass": scoring.get("soft_pass"),
+            "judge_soft_pass": scoring.get("judge_soft_pass"),
+            "min_score_threshold": case.min_score_threshold,
+            "overall_score": scoring.get("overall_score", overall_score),
+            "overall_reason": scoring.get("overall_reason", overall_reason),
+            "overall_pass": scoring.get("overall_pass", False),
+            "llm_evaluation": llm_eval,  # 关键修复：保存完整的 llm_evaluation 对象
+            "dimensions": llm_eval.get("dimensions", {}),  # 从 llm_evaluation 获取维度评分（兼容顶层访问）
+            "suggestions": llm_eval.get("suggestions", []),  # 改进建议
             "metrics": result.get("metrics", {}),
             "duration_ms": result.get("metrics", {}).get("total_duration_ms", 0),
             "response_time_ms": result.get("metrics", {}).get("response_time_ms", 0),
@@ -377,7 +539,7 @@ class TestUnifiedFramework:
         results_collector[case.case_id].append(test_result_data)
         
         # 结束用例日志记录
-        case_logger.finish(result["success"], overall_score)
+        case_logger.finish(scoring.get("overall_pass", result["success"]), scoring.get("overall_score", overall_score))
         
         # 缓冲时间(避免请求过快)
         time.sleep(2)

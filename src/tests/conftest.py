@@ -1,6 +1,7 @@
 import pytest
 import os
 import logging
+import glob
 from src.utils.config_loader import ConfigLoader
 from src.client import AgentClientFactory
 from src.utils.medical_evaluator import create_evaluator
@@ -22,6 +23,30 @@ test_results_collector = {}
 
 # 全局日志记录器
 session_logger = None
+
+
+def pytest_sessionstart(session):
+    """
+    测试会话开始时，清理历史 worker 汇总碎片。
+    避免上一次 xdist 运行残留的 baseline_worker_data 污染本次结果汇总。
+    """
+    worker_id = getattr(session.config, "workerinput", {}).get("workerid", "master")
+    if worker_id != "master":
+        return
+
+    cache = getattr(session.config, "cache", None)
+    if not cache:
+        return
+
+    try:
+        dump_dir = cache.makedir("baseline_worker_data")
+        for fn in glob.glob(os.path.join(str(dump_dir), "*.json")):
+            try:
+                os.remove(fn)
+            except OSError:
+                pass
+    except Exception:
+        pass
 
 
 def _group_results_by_agent(results: dict) -> dict:
@@ -186,33 +211,94 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             # 平均数值型指标
             list_len = len(results_list)
             avg_result["overall_score"] = round(sum(r.get("overall_score", 0) for r in results_list) / list_len, 2)
+            avg_result["hard_score"] = round(sum(r.get("hard_score", 0) for r in results_list) / list_len, 2)
             avg_result["duration_ms"] = round(sum(r.get("duration_ms", 0) for r in results_list) / list_len, 2)
             avg_result["response_time_ms"] = round(sum(r.get("response_time_ms", 0) for r in results_list) / list_len, 2)
+
+            soft_scores = [r.get("soft_score") for r in results_list if r.get("soft_score") is not None]
+            avg_result["soft_score"] = round(sum(soft_scores) / len(soft_scores), 2) if soft_scores else None
+            avg_result["soft_evaluated"] = bool(soft_scores)
             
             # 同步均化 metrics
             avg_result["metrics"] = results_list[-1].get("metrics", {}).copy()
             avg_result["metrics"]["total_duration_ms"] = avg_result["duration_ms"]
             avg_result["metrics"]["response_time_ms"] = avg_result["response_time_ms"]
-            
-            # 平均 dimensions 的细分通过/失败（因为 dict 深层嵌套）
-            avg_dimensions = results_list[-1].get("dimensions", {}).copy()
-            for dim_name in avg_dimensions:
-                if isinstance(avg_dimensions[dim_name], dict) and "score" in avg_dimensions[dim_name]:
-                    scores = []
-                    for r in results_list:
-                        dim_data = r.get("dimensions", {}).get(dim_name)
-                        if isinstance(dim_data, dict) and "score" in dim_data:
+
+            # 平均 dimensions：从所有结果中收集所有维度名，然后计算平均分
+            all_dim_names = set()
+            for r in results_list:
+                # 兼容两种结构：顶层 dimensions 或 llm_evaluation.dimensions
+                dims = r.get("dimensions", {}) or (r.get("llm_evaluation", {}) or {}).get("dimensions", {})
+                if isinstance(dims, dict):
+                    all_dim_names.update(dims.keys())
+
+            avg_dimensions = {}
+            for dim_name in all_dim_names:
+                scores = []
+                reasons = []
+                passes = []
+                score_ranges = []
+
+                for r in results_list:
+                    # 兼容两种结构
+                    dims = r.get("dimensions", {}) or (r.get("llm_evaluation", {}) or {}).get("dimensions", {})
+                    dim_data = dims.get(dim_name)
+                    if isinstance(dim_data, dict):
+                        if "score" in dim_data:
                             scores.append(dim_data["score"])
-                    if scores:
-                        avg_dimensions[dim_name]["score"] = round(sum(scores) / len(scores), 2)
+                        if "reason" in dim_data and dim_data["reason"]:
+                            reasons.append(dim_data["reason"])
+                        if "pass" in dim_data:
+                            passes.append(dim_data["pass"])
+                        if "score_range" in dim_data and dim_data["score_range"]:
+                            score_ranges.append(dim_data["score_range"])
+
+                if scores:
+                    avg_dimensions[dim_name] = {
+                        "score": round(sum(scores) / len(scores), 2),
+                        "reason": reasons[0] if reasons else "",
+                        "pass": all(passes) if passes else (scores[0] >= 60),
+                        "score_range": score_ranges[0] if score_ranges else None
+                    }
+
+            # 关键修复：同时保存到顶层和 llm_evaluation 中，兼容不同读取方式
             avg_result["dimensions"] = avg_dimensions
-            
+            if "llm_evaluation" not in avg_result or not avg_result["llm_evaluation"]:
+                avg_result["llm_evaluation"] = {}
+            avg_result["llm_evaluation"]["dimensions"] = avg_dimensions
+            if avg_result["soft_score"] is not None:
+                avg_result["llm_evaluation"]["overall_score"] = avg_result["soft_score"]
+
+            # 合并 suggestions（去重）
+            all_suggestions = []
+            for r in results_list:
+                suggestions = r.get("suggestions", [])
+                if isinstance(suggestions, list):
+                    for s in suggestions:
+                        if s and s not in all_suggestions:
+                            all_suggestions.append(s)
+            avg_result["suggestions"] = all_suggestions
+
             # Boolean 判断策略：所有记录均 pass 才算过
             avg_result["validation_passed"] = all(r.get("validation_passed", False) for r in results_list)
             avg_result["overall_pass"] = all(r.get("overall_pass", False) for r in results_list)
-            
+
+            score_reasons = [r.get("overall_reason", "") for r in results_list if r.get("overall_reason")]
+            if score_reasons:
+                avg_result["overall_reason"] = score_reasons[-1]
+
+            # 保留最后一个结果的 validation（包含 checks 列表）
+            # 这样 hard_validation 才能从中提取检查点详情
+            last_validation = results_list[-1].get("validation", {})
+            if last_validation:
+                avg_result["validation"] = last_validation
+
             test_results_collector[case_id] = avg_result
         else:
+            # 单次执行时，确保 validation 字段存在
+            if "validation" not in results_list[0]:
+                # 如果没有 validation 字段，创建一个空的
+                results_list[0]["validation"] = {"checks": [], "errors": [], "passed": results_list[0].get("validation_passed", False)}
             test_results_collector[case_id] = results_list[0]
             
     _execute_baseline_and_report_logic()
